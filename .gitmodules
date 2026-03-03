@@ -1,0 +1,3 @@
+[submodule "ffgl-rs"]
+	path = ffgl-rs
+	url = git@github.com:wday/ffgl-rs.git

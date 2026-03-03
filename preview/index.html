@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ISF Preview</title>
+  <link rel="stylesheet" href="/lib/lil-gui.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #fps { position: fixed; bottom: 8px; right: 8px; color: #888; font: 11px monospace; z-index: 10; }
+    #error-overlay {
+      display: none; position: fixed; bottom: 0; left: 0; right: 0;
+      background: rgba(180, 30, 30, 0.92); color: #fff; font: 13px/1.5 monospace;
+      padding: 12px 16px; max-height: 40vh; overflow-y: auto; z-index: 20;
+      white-space: pre-wrap; word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="fps"></div>
+  <div id="error-overlay"></div>
+
+  <script src="/lib/isf.js"></script>
+  <script src="/lib/lil-gui.js"></script>
+  <script>
+    const canvas = document.getElementById('c');
+    const fpsEl = document.getElementById('fps');
+    const errorEl = document.getElementById('error-overlay');
+
+    // WebGL context
+    const gl = canvas.getContext('webgl', { alpha: false, premultipliedAlpha: false });
+    if (!gl) { document.body.textContent = 'WebGL not supported'; throw new Error('No WebGL'); }
+
+    const renderer = new interactiveShaderFormat.Renderer(gl);
+
+    // --- Resize ---
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(window.innerWidth * dpr);
+      canvas.height = Math.round(window.innerHeight * dpr);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- GUI ---
+    let gui = new lil.GUI({ title: 'Parameters' });
+    let guiParams = {};
+
+    function buildGUI(inputs, preserve) {
+      gui.destroy();
+      gui = new lil.GUI({ title: 'Parameters' });
+      guiParams = {};
+
+      for (const inp of inputs) {
+        const name = inp.NAME;
+        if (inp.TYPE === 'float') {
+          const def = preserve[name] !== undefined ? preserve[name] : (inp.DEFAULT ?? inp.MIN ?? 0);
+          guiParams[name] = def;
+          gui.add(guiParams, name, inp.MIN ?? 0, inp.MAX ?? 1)
+            .step((inp.MAX - inp.MIN) / 200)
+            .onChange(v => renderer.setValue(name, v));
+          renderer.setValue(name, def);
+        } else if (inp.TYPE === 'color') {
+          const saved = preserve[name];
+          const def = saved !== undefined ? saved
+            : inp.DEFAULT ? { r: inp.DEFAULT[0], g: inp.DEFAULT[1], b: inp.DEFAULT[2] } : { r: 1, g: 1, b: 1 };
+          guiParams[name] = def;
+          gui.addColor(guiParams, name)
+            .onChange(v => renderer.setValue(name, [v.r, v.g, v.b, 1.0]));
+          renderer.setValue(name, [def.r, def.g, def.b, 1.0]);
+        } else if (inp.TYPE === 'bool') {
+          const def = preserve[name] !== undefined ? preserve[name] : (inp.DEFAULT ?? false);
+          guiParams[name] = def;
+          gui.add(guiParams, name)
+            .onChange(v => renderer.setValue(name, v));
+          renderer.setValue(name, def);
+        }
+      }
+    }
+
+    // --- Parse ISF header ---
+    function parseISFHeader(src) {
+      const m = src.match(/\/\*\s*([\s\S]*?)\s*\*\//);
+      if (!m) return [];
+      try { return JSON.parse(m[1]).INPUTS || []; }
+      catch { return []; }
+    }
+
+    // --- Snapshot current param values for preservation ---
+    function snapshotParams() {
+      return { ...guiParams };
+    }
+
+    // --- Load shader ---
+    async function loadShader() {
+      const res = await fetch('/shader');
+      const src = await res.text();
+      const inputs = parseISFHeader(src);
+
+      const preserved = snapshotParams();
+      renderer.loadSource(src);
+
+      if (!renderer.valid) {
+        errorEl.textContent = renderer.error || 'Shader compilation failed';
+        errorEl.style.display = 'block';
+      } else {
+        errorEl.style.display = 'none';
+      }
+
+      buildGUI(inputs, preserved);
+    }
+
+    // --- Render loop ---
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+
+    function frame() {
+      requestAnimationFrame(frame);
+      if (renderer.valid) renderer.draw(canvas);
+
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        fpsEl.textContent = `${Math.round(frameCount * 1000 / (now - lastFpsTime))} fps`;
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+    }
+
+    // --- WebSocket hot reload ---
+    function connectWS() {
+      const ws = new WebSocket(`ws://${location.host}`);
+      ws.onmessage = (e) => { if (e.data === 'reload') loadShader(); };
+      ws.onclose = () => setTimeout(connectWS, 1000);
+    }
+
+    // --- Boot ---
+    loadShader().then(() => {
+      frame();
+      connectWS();
+    });
+  </script>
+</body>
+</html>
