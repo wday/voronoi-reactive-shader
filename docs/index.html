@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shader Math Deep Dive</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+    <h1>Shader Math Deep Dive</h1>
+    <p>Mathematical foundations of
+        <a href="https://github.com/wday/voronoi-reactive-shader/blob/main/shaders/voronoi_reactive.fs">voronoi_reactive.fs</a>,
+        walked through function-by-function from building blocks up to final composition.
+    </p>
+</header>
+
+<main>
+
+<!-- ============================================================ -->
+<!-- SECTION 1: Hash Functions                                     -->
+<!-- ============================================================ -->
+
+<section id="hash">
+<h2>1. Hash Functions</h2>
+
+<p>Both <code>hash1</code> and <code>hash2</code> map a 2D input to a
+pseudorandom output (scalar or 2-component) in [0,&nbsp;1). They're the source
+of all randomness in the shader.</p>
+
+<h3>The construction, step by step</h3>
+
+<p>Take <code>hash1</code>:</p>
+
+<pre><code>vec3 p3 = fract(vec3(p.xyx) * 0.1031);       // (1) scale + fold
+p3 += dot(p3, p3.yzx + 33.33);                // (2) mix via dot product
+return fract((p3.x + p3.y) * p3.z);           // (3) collapse + fold</code></pre>
+
+<p><strong>Step (1)</strong> &mdash; <code>p.xyx</code> promotes the 2D input to
+3D by repeating x. The multiply by <code>0.1031</code> rescales into a
+fractional range, and <code>fract()</code> wraps it to [0,&nbsp;1). This is the
+first &ldquo;folding&rdquo; &mdash; it maps the infinite integer lattice into a
+bounded domain.</p>
+
+<p><strong>Step (2)</strong> &mdash; The dot product against a <em>permuted</em>
+version of itself (<code>p3.yzx</code>) creates cross-component mixing. The
+<code>+ 33.33</code> offset ensures that even inputs near zero produce large
+intermediate values. This is the <em>avalanche</em> step &mdash; small input
+changes cascade into large output changes.</p>
+
+<p><strong>Step (3)</strong> &mdash; A final multiply-and-<code>fract</code>
+collapses back to a scalar. The multiplication is the key nonlinearity: it
+creates high-frequency variation that <code>fract</code> then wraps.</p>
+
+<h3>Why these constants?</h3>
+
+<p>The constants (0.1031, 0.1030, 0.0973, 33.33) are empirically tuned by
+<a href="https://www.shadertoy.com/view/4djSRW">Dave Hoskins</a>.
+The design goals:</p>
+
+<ul>
+    <li><strong>Irrational-ish ratios</strong> &mdash; the three scale factors are
+    close but not equal. If they were identical, the swizzled components would be
+    correlated. The slight differences break symmetry.</li>
+    <li><strong>Large offset (33.33)</strong> &mdash; prevents the dot product
+    from being near-zero for small inputs, which would kill the avalanche
+    effect.</li>
+    <li><strong>No special mathematical significance</strong> &mdash; unlike the
+    golden ratio constants in some hashes. These were found by visual inspection
+    of distribution quality on GPU.</li>
+</ul>
+
+<h3>Why &ldquo;no sine&rdquo;?</h3>
+
+<p>The classic GPU hash is
+<code>fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453)</code>.
+The problems:</p>
+
+<ol>
+    <li><strong>Precision</strong> &mdash; <code>sin()</code> on large inputs
+    depends on the GPU's trig implementation. Different GPUs compute
+    <code>sin(78432.7)</code> differently. The high-frequency part of the sine
+    curve amplifies these errors.</li>
+    <li><strong>Periodicity</strong> &mdash; <code>sin</code> is periodic. For
+    large enough inputs the hash starts repeating in visible patterns.</li>
+    <li><strong>Speed</strong> &mdash; on some mobile GPUs, <code>sin</code> is a
+    multi-cycle instruction. Multiply-and-<code>fract</code> is uniformly
+    fast.</li>
+</ol>
+
+<p>Hoskins' hash uses only <code>fract</code>, <code>dot</code>,
+<code>+</code>, and <code>*</code> &mdash; all of which are exact (or nearly
+exact) across GPU architectures. The result: portable, consistent randomness.</p>
+
+<h3>Distribution quality</h3>
+
+<p>This class of hash isn't cryptographically uniform, but it's <em>visually</em>
+uniform &mdash; the autocorrelation is low enough that human eyes can't detect
+patterns. Toggle between the two below to see the difference:</p>
+
+<!-- Demo: Hash scatter -->
+<div class="demo" data-demo="hash">
+    <canvas></canvas>
+    <div class="controls">
+        <button data-mode="nosine" class="active">No-sine hash</button>
+        <button data-mode="sine">Sine hash</button>
+    </div>
+</div>
+<p class="demo-caption">2D scatter of hash2 output for a 64&times;64 grid of
+integer inputs. Both look uniform at first glance &mdash; the no-sine version is
+portable across GPUs; the sine version may produce different patterns on
+different hardware.</p>
+
+<h3><code>hash2</code> differences</h3>
+
+<pre><code>vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));</code></pre>
+
+<p>The three <em>different</em> scale constants mean the three intermediate
+components decorrelate faster. The output extraction also differs:</p>
+
+<pre><code>return fract((p3.xx + p3.yz) * p3.zy);</code></pre>
+
+<p>This produces <em>two</em> outputs from the same intermediate state by using
+different swizzle patterns. The two output components are not statistically
+independent (they share the same intermediate <code>p3</code>), but they're
+uncorrelated enough for Voronoi seed placement.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 2: Voronoi / Worley Noise                             -->
+<!-- ============================================================ -->
+
+<section id="voronoi">
+<h2>2. Voronoi / Worley Noise</h2>
+
+<h3>F1 and F2: geometric meaning</h3>
+
+<p>The shader evaluates Voronoi on a grid. Each integer cell <code>(i, j)</code>
+gets a <em>seed point</em> (random position inside the cell). For any query point
+<code>p</code>:</p>
+
+<ul>
+    <li><strong>F1</strong> = distance to the nearest seed</li>
+    <li><strong>F2</strong> = distance to the second-nearest seed</li>
+</ul>
+
+<p>Geometrically:</p>
+
+<ul>
+    <li><strong>F1</strong> defines the classic Voronoi diagram. The locus
+    <code>F1 = 0</code> is the set of seed points themselves. The Voronoi
+    <em>cell</em> for seed <code>s</code> is the region closer to
+    <code>s</code> than to any other seed.</li>
+    <li><strong>F2 &minus; F1</strong> measures how close the query point is to a
+    <em>cell boundary</em>. On the boundary itself, the two nearest seeds are
+    equidistant, so <code>F2 &minus; F1 = 0</code>. Deep inside a cell,
+    <code>F2 &minus; F1</code> is large.</li>
+</ul>
+
+<p>The key insight: <strong>F2 &minus; F1 is a smooth scalar field whose zero set
+is exactly the Voronoi edge network.</strong> That's why it's so useful &mdash;
+you get edges &ldquo;for free&rdquo; from the distance computation, no derivative
+or finite-difference needed.</p>
+
+<p>Toggle between the three modes to see what F1, F2, and F2&minus;F1 actually
+look like. White dots are seed points.</p>
+
+<!-- Demo: Voronoi F1/F2 -->
+<div class="demo" data-demo="voronoi-f1f2">
+    <canvas></canvas>
+    <div class="controls">
+        <button data-uniform="u_mode" data-value="0">F1</button>
+        <button data-uniform="u_mode" data-value="1">F2</button>
+        <button data-uniform="u_mode" data-value="2" class="active">F2 &minus; F1</button>
+    </div>
+</div>
+<p class="demo-caption">Static Voronoi with visible seed points. F1 shows
+distance-to-nearest (bright near seeds). F2 shows distance-to-second-nearest.
+F2&minus;F1 reveals the edge network &mdash; bright lines where two seeds are
+equidistant.</p>
+
+<h3>Why the 3&times;3 neighborhood search is sufficient</h3>
+
+<p>The loop checks a 3&times;3 grid of cells centered on the cell containing the
+query point. The seed for cell <code>(i, j)</code> is confined to
+<code>[0.1, 0.9]</code> within the cell (<code>seedHash * 0.8 + 0.1</code>).
+Drift can push it further &mdash; up to about &plusmn;0.35. Worst case:</p>
+
+<pre><code>seedBase + drift &isin; [0.1 - 0.35, 0.9 + 0.35] = [-0.25, 1.25]</code></pre>
+
+<p>So a seed can wander at most ~0.25 units outside its home cell. Seeds two
+cells away are at minimum 0.75 units from the cell boundary, while there's always
+a closer seed in the 3&times;3 block. So 3&times;3 is sufficient with comfortable
+margin.</p>
+
+<h3>Seed animation model</h3>
+
+<p>Each seed has two motion modes blended by <code>driftChaos</code>:</p>
+
+<p><strong>Circular drift</strong>:</p>
+
+<pre><code>float angle = 6.2832 * seedHash.x + animTime * (0.3 + seedHash.y * 0.7);
+vec2 circularDrift = 0.35 * vec2(cos(angle), sin(angle));</code></pre>
+
+<p>Simple circular motion &mdash; <code>(r&middot;cos(&omega;t + &phi;),
+r&middot;sin(&omega;t + &phi;))</code> &mdash; with phase
+<code>&phi; = 2&pi; &middot; seedHash.x</code> and angular velocity varying per
+cell in [0.3, 1.0]. Smooth, predictable orbits.</p>
+
+<p><strong>Chaotic drift</strong>: a keyframe random walk. Time is quantized into
+phases; at each boundary a new random target is generated. The seed
+smoothly interpolates between targets using Hermite smoothstep for C1
+continuity &mdash; no visible snapping.</p>
+
+<p><strong>The blend</strong>: <code>mix(circularDrift, chaoticDrift,
+driftChaos)</code>. Drag the slider below to scrub between pure circular orbits
+and pure random walk. Watch how the seed dots move.</p>
+
+<!-- Demo: Seed animation -->
+<div class="demo" data-demo="seed-animation">
+    <canvas></canvas>
+    <div class="controls">
+        <label>driftChaos
+            <input type="range" data-uniform="u_driftChaos"
+                   min="0" max="1" step="0.01" value="0">
+            <span class="value">0.00</span>
+        </label>
+    </div>
+</div>
+<p class="demo-caption">At 0: smooth circular orbits. At 1: random walk with
+Hermite-interpolated keyframes. The default in the shader is 0.3 &mdash; mostly
+circular with some random perturbation.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 3: Value Noise & Spatial Warp                         -->
+<!-- ============================================================ -->
+
+<section id="noise">
+<h2>3. Value Noise &amp; Spatial Warp</h2>
+
+<h3>Hermite interpolation: why 3t&sup2; &minus; 2t&sup3;?</h3>
+
+<p>In <code>valueNoise2</code>:</p>
+
+<pre><code>f = f * f * (3.0 - 2.0 * f);   // f &larr; 3f&sup2; - 2f&sup3;</code></pre>
+
+<p>This is the Hermite basis function <code>h(t) = 3t&sup2; &minus;
+2t&sup3;</code>, mapping [0,1] &rarr; [0,1] with:</p>
+
+<ul>
+    <li><code>h(0) = 0</code>, <code>h(1) = 1</code> (interpolation)</li>
+    <li><code>h'(0) = 0</code>, <code>h'(1) = 0</code> (C1 continuity)</li>
+</ul>
+
+<p>Why not linear? With linear interpolation between grid values, the
+derivative is <em>discontinuous</em> at integer lattice boundaries. You'd see
+visible seams. The Hermite smoothstep guarantees continuous first derivatives
+everywhere.</p>
+
+<p>Why not <code>6t&sup5; &minus; 15t&sup4; + 10t&sup3;</code> (Perlin's
+improved smoothstep)? That gives C2 continuity, which matters for lighting
+computations where you differentiate the noise to get normals. For a
+displacement warp, C1 is sufficient &mdash; the human eye doesn't detect
+second-derivative discontinuities in color fields.</p>
+
+<p>Hover over the chart to compare the three curves:</p>
+
+<!-- Demo: Smoothstep curves -->
+<div class="demo" data-demo="smoothstep">
+    <canvas></canvas>
+</div>
+<p class="demo-caption">Linear has sharp corners at 0 and 1. Hermite (blue)
+rounds them to zero slope. Quintic (orange) also zeroes the second derivative at
+the endpoints.</p>
+
+<h3>The noise itself</h3>
+
+<pre><code>vec2 a = hash2(i) - 0.5;
+vec2 b = hash2(i + vec2(1,0)) - 0.5;
+vec2 c = hash2(i + vec2(0,1)) - 0.5;
+vec2 d = hash2(i + vec2(1,1)) - 0.5;
+return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);</code></pre>
+
+<p>This is <em>bilinear interpolation</em> (with Hermite-smoothed coordinates)
+of random vectors at the four corners of the integer cell. The
+<code>- 0.5</code> centering means the noise has zero mean &mdash; important for
+a warp displacement, so the average UV position doesn't shift.</p>
+
+<p>Note: this is <em>value noise</em>, not <em>gradient noise</em> (Perlin
+noise). Value noise interpolates random <em>values</em>; gradient noise
+interpolates random <em>gradients</em> dotted with position offsets. Value noise
+has a slightly &ldquo;blobby&rdquo; character. For a spatial warp, this is fine
+&mdash; you want broad, smooth distortions.</p>
+
+<h3>The two-octave warp</h3>
+
+<pre><code>vec2 warpOffset = valueNoise2(uv * 3.0 + TIME * 0.08);
+warpOffset += valueNoise2(uv * 7.0 - TIME * 0.05) * 0.5;
+uv += warpOffset * warp * 0.25;</code></pre>
+
+<table>
+    <thead>
+        <tr><th>Octave</th><th>Frequency</th><th>Amplitude</th><th>Time drift</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>1</td><td>3.0</td><td>1.0</td><td>+0.08</td></tr>
+        <tr><td>2</td><td>7.0</td><td>0.5</td><td>&minus;0.05</td></tr>
+    </tbody>
+</table>
+
+<p>The frequency ratio is 7/3 &approx; 2.33, and the amplitude ratio is 0.5.
+Close to standard fBm (lacunarity 2, persistence 0.5) but with slightly wider
+frequency spacing. The opposite time drift directions mean the two octaves slide
+past each other, creating a slowly evolving distortion.</p>
+
+<p>The warp modifies UV <em>before</em> it enters the Voronoi computation. The
+cells themselves get distorted &mdash; boundaries curve and wobble. Drag the
+slider from 0 (geometric polygons) toward 1 (organic, biological shapes):</p>
+
+<!-- Demo: Warp -->
+<div class="demo" data-demo="warp">
+    <canvas></canvas>
+    <div class="controls">
+        <label>warp
+            <input type="range" data-uniform="u_warp"
+                   min="0" max="1" step="0.01" value="0">
+            <span class="value">0.00</span>
+        </label>
+    </div>
+</div>
+<p class="demo-caption">At 0: clean geometric Voronoi. As warp increases, the
+value noise distorts UV space, bending cell boundaries into organic curves.
+The warp doesn't change cell topology &mdash; same cells, same neighbors, just
+different shapes.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 4: Multi-Layer Composition                            -->
+<!-- ============================================================ -->
+
+<section id="layers">
+<h2>4. Multi-Layer Composition</h2>
+
+<h3>Scale progression</h3>
+
+<pre><code>float scale = density * pow(layerSpread, fl);   // fl = 0, 1, 2</code></pre>
+
+<p>With defaults <code>density = 8</code>, <code>layerSpread = 2</code>:</p>
+
+<table>
+    <thead>
+        <tr><th>Layer</th><th>Scale</th><th>Cells across screen</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>0</td><td>8</td><td>~8</td></tr>
+        <tr><td>1</td><td>16</td><td>~16</td></tr>
+        <tr><td>2</td><td>32</td><td>~32</td></tr>
+    </tbody>
+</table>
+
+<p>This is a <em>geometric frequency cascade</em> &mdash; each layer has
+<code>layerSpread&times;</code> more cells than the previous. Same principle as
+fBm octaves, but applied to Voronoi patterns instead of noise.</p>
+
+<h3>Layer weighting</h3>
+
+<pre><code>float layerWeight = pow(layerMix, fl);
+if (layer == 0) layerWeight = 1.0;</code></pre>
+
+<table>
+    <thead>
+        <tr><th>Layer</th><th>Weight (layerMix&nbsp;=&nbsp;0.5)</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>0</td><td>1.0 (forced)</td></tr>
+        <tr><td>1</td><td>0.5</td></tr>
+        <tr><td>2</td><td>0.25</td></tr>
+    </tbody>
+</table>
+
+<p>Layer 0 is always full-strength. Subsequent layers contribute with
+exponentially decreasing weight. At <code>layerMix = 0</code>: only layer 0. At
+<code>layerMix = 1</code>: all three layers contribute equally.</p>
+
+<p>The normalization <code>color /= max(totalWeight, 0.001)</code> divides by
+<code>1 + layerMix + layerMix&sup2;</code>, keeping brightness roughly constant
+regardless of <code>layerMix</code>.</p>
+
+<h3>Contrast and brightness</h3>
+
+<pre><code>layerColor = clamp((layerColor - 0.5) * contrast + 0.5, 0.0, 1.0);
+color *= brightness;
+color *= tint.rgb;</code></pre>
+
+<p>The contrast transform is an affine map around the midpoint 0.5:</p>
+
+<pre><code>output = contrast &times; (input &minus; 0.5) + 0.5</code></pre>
+
+<p>At <code>contrast = 1</code>: identity. At <code>contrast &gt; 1</code>:
+values push away from mid-gray. At <code>contrast &lt; 1</code>: values compress
+toward mid-gray.</p>
+
+<p>Contrast is applied <em>per layer before blending</em>, while brightness is
+applied <em>after blending</em>. If you swapped them, high contrast on individual
+layers would clip before blending, losing information.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<!-- SECTION 5: Edge Detection & Glow                              -->
+<!-- ============================================================ -->
+
+<section id="edges">
+<h2>5. Edge Detection &amp; Glow</h2>
+
+<h3><code>smoothstep</code> as a soft threshold</h3>
+
+<pre><code>float edgeFactor = 1.0 - smoothstep(0.0, max(edgeWidth, 0.001), edgeDist);</code></pre>
+
+<p>Recall <code>edgeDist = F2 &minus; F1</code>, which is 0 on cell boundaries
+and positive inside cells. The <code>smoothstep(0, w, d)</code> function
+returns:</p>
+
+<pre><code>           { 0                          if d &le; 0
+s(d) =     { 3(d/w)&sup2; &minus; 2(d/w)&sup3;   if 0 &lt; d &lt; w
+           { 1                          if d &ge; w</code></pre>
+
+<p>So <code>1 &minus; smoothstep(...)</code> is 1 on the boundary and falls to 0
+over a distance of <code>edgeWidth</code>. A soft edge line with controllable
+width.</p>
+
+<h3>The glow layer</h3>
+
+<pre><code>float glowRange = edgeWidth * (1.0 + edgeGlow * 4.0);
+float glowFactor = (1.0 - smoothstep(0.0, glowRange, edgeDist)) * edgeGlow;
+float totalEdge = clamp(max(edgeFactor, glowFactor), 0.0, 1.0);</code></pre>
+
+<p>The glow is a <em>second, wider</em> smoothstep threshold with range
+<code>edgeWidth &times; (1 + 4&middot;edgeGlow)</code>. At default
+<code>edgeGlow = 0.4</code>:</p>
+
+<pre><code>glowRange = edgeWidth &times; 2.6</code></pre>
+
+<p>The glow extends about 2.6&times; further than the hard edge. The
+<code>max(edgeFactor, glowFactor)</code> ensures the core edge is never dimmed
+by the glow. Visually: a bright core line with a softer halo around it.</p>
+
+<h3>Edge color</h3>
+
+<pre><code>vec3 edgeRGB = hsv2rgb(vec3(hue, colorSat * 0.2, 1.0));</code></pre>
+
+<p>Same hue as the cell interior, but saturation dropped to 20% (closer to
+white) and brightness at full. Bright, pale edge lines that &ldquo;glow&rdquo;
+against the more saturated cell interiors.</p>
+
+<p>Try adjusting both sliders to see the hard edge and soft glow independently:</p>
+
+<!-- Demo: Edge glow -->
+<div class="demo" data-demo="edge-glow">
+    <canvas></canvas>
+    <div class="controls">
+        <label>edgeWidth
+            <input type="range" data-uniform="u_edgeWidth"
+                   min="0" max="0.15" step="0.001" value="0.04">
+            <span class="value">0.04</span>
+        </label>
+        <label>edgeGlow
+            <input type="range" data-uniform="u_edgeGlow"
+                   min="0" max="1" step="0.01" value="0.4">
+            <span class="value">0.40</span>
+        </label>
+    </div>
+</div>
+<p class="demo-caption">edgeWidth controls the hard line thickness (the
+smoothstep threshold). edgeGlow adds a wider, dimmer halo. Set edgeWidth to 0 to
+see glow-only; set edgeGlow to 0 for hard lines only.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<!-- Customization hooks                                           -->
+<!-- ============================================================ -->
+
+<section id="hooks">
+<h2>Customization Hooks</h2>
+
+<p>Places where different choices produce visually distinct results:</p>
+
+<table>
+    <thead>
+        <tr><th>What to change</th><th>Where</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Seed confinement range</td>
+            <td><code>0.8 + 0.1</code></td>
+            <td>Wider range &rarr; more irregular cells, but may need 5&times;5 search</td>
+        </tr>
+        <tr>
+            <td>Drift radius</td>
+            <td><code>0.35</code>, <code>0.7</code></td>
+            <td>Larger &rarr; more motion, cells can &ldquo;swap&rdquo; neighbors</td>
+        </tr>
+        <tr>
+            <td>Noise type for warp</td>
+            <td><code>valueNoise2</code></td>
+            <td>Swap for curl noise &rarr; divergence-free warp, more fluid-like</td>
+        </tr>
+        <tr>
+            <td>fBm octave count</td>
+            <td>Warp section</td>
+            <td>More octaves &rarr; finer warp detail</td>
+        </tr>
+        <tr>
+            <td>Distance metric</td>
+            <td><code>length()</code></td>
+            <td>Manhattan &rarr; diamond cells; Chebyshev &rarr; square cells</td>
+        </tr>
+        <tr>
+            <td>Edge function</td>
+            <td><code>F2 &minus; F1</code></td>
+            <td>Use F1 alone &rarr; distance-field shading instead of edges</td>
+        </tr>
+        <tr>
+            <td>Layer count</td>
+            <td>Main loop</td>
+            <td>More layers &rarr; richer texture but heavier GPU cost</td>
+        </tr>
+        <tr>
+            <td>Smoothstep &rarr; quintic</td>
+            <td><code>valueNoise2</code></td>
+            <td>C2 continuity, subtly smoother warp</td>
+        </tr>
+    </tbody>
+</table>
+
+</section>
+
+</main>
+
+<footer>
+    <p>Source:
+        <a href="https://github.com/wday/voronoi-reactive-shader">voronoi-reactive-shader</a>
+        &middot; Hash functions by
+        <a href="https://www.shadertoy.com/view/4djSRW">Dave Hoskins</a>
+        (MIT) &middot; Voronoi after Worley/Quilez &middot; HSV by Sam Hocevar
+    </p>
+</footer>
+
+<script src="demos.js"></script>
+
+</body>
+</html>

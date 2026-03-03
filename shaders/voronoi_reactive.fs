@@ -1,7 +1,7 @@
 /*{
     "ISFVSN": "2",
     "DESCRIPTION": "Reactive layered Voronoi — 3-layer multi-scale Voronoi with animated seeds, edge glow, spatial warp, and HSV coloring. Designed as a control surface for external audio reactivity.",
-    "CREDIT": "wday",
+    "CREDIT": "wday | Hash functions: Dave Hoskins | Voronoi: Worley/Quilez | HSV: Sam Hocevar",
     "CATEGORIES": [
         "Generator"
     ],
