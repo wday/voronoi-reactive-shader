@@ -16,6 +16,7 @@ floating-point precision variance across GPUs.
 - **Original shader:** [Hash without Sine (Shadertoy)](https://www.shadertoy.com/view/4djSRW)
 - **License:** [MIT](https://opensource.org/licenses/MIT) (specified in shader source)
 - **Academic survey:** ["Hash Functions for GPU Rendering" (JCGT, 2020)](https://jcgt.org/published/0009/03/02/paper.pdf)
+  (run `./scripts/download-refs.sh` for a local copy)
 
 ## Voronoi / Cellular Noise — Steven Worley, Inigo Quilez
 
@@ -39,7 +40,7 @@ The branchless `vec4 K` conversion pattern.
 
 - **Author:** Sam Hocevar
 - **Stack Overflow answer (2013):** [stackoverflow.com/a/17897228](https://stackoverflow.com/a/17897228)
-- **Blog post:** [lolengine.net — RGB to HSV in GLSL](http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl)
+- **Blog post:** ~~[lolengine.net — RGB to HSV in GLSL](http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl)~~ (site returns 403 as of March 2026)
 - **License:** [WTFPL](http://www.wtfpl.net/) (essentially public domain)
 - **glslify package:** [glsl-hsv2rgb](https://github.com/hughsk/glsl-hsv2rgb)
 
@@ -52,7 +53,8 @@ noise function.
 - **Original paper:** Ken Perlin, "An Image Synthesizer", SIGGRAPH 1985 —
   [ACM Digital Library](https://dl.acm.org/doi/10.1145/325165.325247)
 - **Improved noise (quintic curve):** Ken Perlin, "Improving Noise",
-  SIGGRAPH 2002 — [PDF (NYU)](https://mrl.cs.nyu.edu/~perlin/paper445.pdf)
+  SIGGRAPH 2002 — [PDF (NYU)](https://cs.nyu.edu/~perlin/paper445.pdf)
+  (run `./scripts/download-refs.sh` for a local copy)
 - **Inigo Quilez:** [Value Noise Derivatives](https://iquilezles.org/articles/morenoise/)
 - **Tutorial:** [The Book of Shaders, Chapter 11: Noise](https://thebookofshaders.com/11/)
 
