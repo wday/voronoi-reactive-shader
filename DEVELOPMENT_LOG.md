@@ -200,3 +200,54 @@ source "$HOME/.cargo/env"
 ```
 
 The ffgl-rs submodule pins a specific commit. If you need to update it, `cd ffgl-rs && git pull origin main`, then rebuild. The shader is independent of ffgl-rs version as long as the ISF pipeline is unchanged.
+
+---
+
+## Checkpoint: v0.3 — Windows/WSL2 Environment & Resolume Avenue (2026-03-05)
+
+Ported the build pipeline to Windows. The plugin now builds as a `.dll` and loads in Resolume Avenue on Windows, driven entirely from a WSL2 shell.
+
+### What Changed
+
+- **Windows FFGL build pipeline** — invoke the Windows host Rust toolchain from WSL via `cmd.exe /c "pushd \\wsl$\Ubuntu\... && cargo build"`. No cross-compilation needed; the host `cargo.exe` builds natively against Windows OpenGL.
+- **`ffgl-core/build.rs` fix** — added `.layout_tests(false)` to both `bindgen::Builder` calls. Bindgen was generating struct size assertions for transitively-included Windows SDK types (`_GUID`, `_CONTEXT`, `_DEBUG_EVENT`, etc.) that overflow on x86_64. Pushed to `ffgl-rs` on branch `fix/windows-x64-bindgen-layout-tests`.
+- **`WINDOWS_ENVIRONMENT.md`** — full setup guide covering scoop/rustup/LLVM prerequisites, the build command, deployment to Resolume, WezTerm config, and troubleshooting.
+- **`CREDITS.md` link audit** — fixed dead Perlin PDF URL (`mrl.cs.nyu.edu` → `cs.nyu.edu`), noted lolengine.net 403, added `scripts/download-refs.sh` to fetch reference PDFs locally (gitignored to avoid licensing issues).
+
+### Build Pipeline (Windows)
+
+```bash
+# From WSL — builds a Windows .dll using host Rust toolchain
+cd /mnt/c && cmd.exe /c "pushd \\\\wsl\$\\Ubuntu\\home\\alien\\dev\\voronoi-reactive-shader\\ffgl-rs \
+&& set PATH=C:\Users\alien\scoop\apps\rustup\current\.cargo\bin;C:\Users\alien\scoop\shims;%PATH% \
+&& set ISF_SOURCE=Z:\home\alien\dev\voronoi-reactive-shader\shaders\voronoi_reactive.fs \
+&& set ISF_NAME=voronoi_reactive \
+&& set CARGO_TARGET_DIR=C:\Users\alien\.cargo-target\ffgl-rs \
+&& cargo build --release -p ffgl-isf"
+
+# Deploy
+cp /mnt/c/Users/alien/.cargo-target/ffgl-rs/release/ffgl_isf.dll \
+   "/mnt/c/Users/alien/Documents/Resolume Avenue/Extra Effects/ffgl_isf.dll"
+```
+
+### Key Discoveries
+
+- **`CARGO_TARGET_DIR` must be on `C:\`** — cargo has a dep-info parsing bug with UNC paths (`Z:\` mapped from `\\wsl$\...`), producing `malformed dep-info format, trailing \`. Putting the target dir on the native Windows filesystem avoids this.
+- **`ISF_NAME` env var required** — without it, the plugin displays a default name ("radial gradient source") instead of `voronoi_reactive`. The name is embedded at compile time via `env!("ISF_NAME")`.
+- **Resolume Avenue (not Arena)** — scans `C:\Users\<user>\Documents\Resolume Avenue\Extra Effects\` on startup. The directory must exist but Resolume creates it automatically after first launch.
+- **Submodule SSH → HTTPS** — the WSL environment had `gh` auth via HTTPS but no SSH keys configured. Fixed with `git config submodule.ffgl-rs.url https://github.com/wday/ffgl-rs.git`.
+
+### Verified
+
+- [x] Plugin builds as `.dll` (3.5MB) from WSL via Windows cargo
+- [x] Resolume Avenue loads plugin successfully (confirmed in log)
+- [x] Plugin appears in Sources panel as `*voronoi_reactive`
+- [x] All 13 parameters present and functional
+- [x] Shader renders correctly at runtime
+- [x] Browser preview harness works on WSL (Node.js, `localhost:9000`)
+
+### Not Yet Tested
+
+- [ ] Performance at 1080p/60fps on Windows
+- [ ] Hot-reload workflow: edit shader → rebuild DLL → reload in Resolume
+- [ ] Audio reactivity path on Windows
