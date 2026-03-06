@@ -58,6 +58,20 @@ noise function.
 - **Inigo Quilez:** [Value Noise Derivatives](https://iquilezles.org/articles/morenoise/)
 - **Tutorial:** [The Book of Shaders, Chapter 11: Noise](https://thebookofshaders.com/11/)
 
+## Normalized Convolution — Hans Knutsson, Carl-Fredrik Westin
+
+Image-driven Voronoi density uses normalized convolution to reconstruct a
+smooth certainty field from sparse image samples. The certainty field biases
+seed placement and cell size, producing a Voronoi tessellation that tracks
+image structure.
+
+- **Original paper:** Hans Knutsson & Carl-Fredrik Westin, "Normalized and
+  Differential Convolution: Methods for Interpolation and Filtering of
+  Incomplete and Uncertain Data", CVPR 1993, pp. 515–523 —
+  [IEEE Xplore](https://ieeexplore.ieee.org/document/341081)
+  (run `./scripts/download-refs.sh` for a local copy via CiteSeerX)
+- **Key equations used:** Definition 2 (eq. 3), 0th-order interpolation (eq. 12)
+
 ## ISF (Interactive Shader Format) — VIDVOX
 
 The shader metadata format (the JSON header, built-in uniforms like `TIME`,
@@ -75,8 +89,16 @@ The shader metadata format (the JSON header, built-in uniforms like `TIME`,
 | Hash functions (Hoskins) | MIT | Yes |
 | Voronoi algorithm | Mathematical technique (not copyrightable) | Yes |
 | HSV conversion (Hocevar) | WTFPL | Yes |
+| Normalized convolution (Knutsson & Westin) | Mathematical technique | Yes |
 | Value noise | Mathematical technique | Yes |
 | ISF format | Open specification | Yes |
 
 All components are permissively licensed or uncopyrightable mathematical
 techniques. Attribution is maintained because it's the right thing to do.
+
+---
+
+## Acknowledgements
+
+- **Jeff La** — Discussion leading to the application of Knutsson & Westin's
+  normalized convolution for image-driven Voronoi density.
