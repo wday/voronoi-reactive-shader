@@ -136,6 +136,22 @@
             "MIN": 0.01,
             "MAX": 0.5,
             "DEFAULT": 0.1
+        },
+        {
+            "NAME": "certContrast",
+            "LABEL": "Cert Contrast",
+            "TYPE": "float",
+            "MIN": 0.1,
+            "MAX": 5.0,
+            "DEFAULT": 1.0
+        },
+        {
+            "NAME": "certBrightness",
+            "LABEL": "Cert Brightness",
+            "TYPE": "float",
+            "MIN": 0.0,
+            "MAX": 1.0,
+            "DEFAULT": 0.0
         }
     ]
 }*/
@@ -181,6 +197,9 @@ vec3 hsv2rgb(vec3 c) {
 }
 
 
+// --- NC output: smooth local certainty (set by voronoiLayer) ---
+float ncLocalCertainty = 0.0;
+
 // --- Image certainty: luminance as importance ---
 
 float imageCertainty(vec2 seedUV) {
@@ -217,7 +236,8 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             // Sample image certainty at seed position
             vec2 seedWorldUV = (cellPos + seedBase) / scale;
             vec2 seedNormUV = vec2(seedWorldUV.x / aspect, seedWorldUV.y);
-            float cert = imageCertainty(seedNormUV) * imageInfluence;
+            float rawCert = imageCertainty(seedNormUV);
+            float cert = pow(rawCert, certContrast) * imageInfluence;
 
             // NC: accumulate certainty with Gaussian applicability
             vec2 point0 = neighbor + seedBase;
@@ -245,8 +265,10 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             vec2 point = neighbor + seedBase + drift;
 
             // Certainty shrinks effective distance → tighter cells in important regions
+            // Exponential scaling: cert=1 → ~10x tighter cells
             float dist = length(point - localP);
-            float effectiveDist = dist / (1.0 + cert * 2.0);
+            float densityBoost = exp(cert * 3.0);
+            float effectiveDist = dist / densityBoost;
 
             if (effectiveDist < f1) {
                 f2 = f1;
@@ -257,6 +279,10 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             }
         }
     }
+
+    // NC result: smooth local certainty at this pixel
+    float localCert = certWeightSum > 0.001 ? certWeightedSum / certWeightSum : 0.0;
+    ncLocalCertainty = localCert;
 
     return vec4(f1, f2, nearestCell);
 }
@@ -292,9 +318,10 @@ void main() {
 
         float edgeDist = vor.y - vor.x;
 
-        // Cell color: hue from cell ID hash
+        // Cell color: hue from cell ID hash, value from certainty
         float hue = fract(hash1(vor.zw) + colorShift + fl * 0.15);
-        vec3 cellRGB = hsv2rgb(vec3(hue, colorSat, 0.55));
+        float cellValue = mix(0.55, ncLocalCertainty, certBrightness);
+        vec3 cellRGB = hsv2rgb(vec3(hue, colorSat, cellValue));
 
         // Edge detection: hard edge + soft glow
         float edgeFactor = 1.0 - smoothstep(0.0, max(edgeWidth, 0.001), edgeDist);
