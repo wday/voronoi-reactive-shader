@@ -3,6 +3,7 @@
     "DESCRIPTION": "Reactive layered Voronoi — 3-layer multi-scale Voronoi with animated seeds, edge glow, spatial warp, and HSV coloring. Designed as a control surface for external audio reactivity.",
     "CREDIT": "wday | Hash functions: Dave Hoskins | Voronoi: Worley/Quilez | HSV: Sam Hocevar",
     "CATEGORIES": [
+        "Fx",
         "Generator"
     ],
     "INPUTS": [
@@ -107,6 +108,18 @@
             "LABEL": "Tint",
             "TYPE": "color",
             "DEFAULT": [1.0, 1.0, 1.0, 1.0]
+        },
+        {
+            "NAME": "inputImage",
+            "TYPE": "image"
+        },
+        {
+            "NAME": "blendAmount",
+            "LABEL": "Image Blend",
+            "TYPE": "float",
+            "MIN": 0.0,
+            "MAX": 1.0,
+            "DEFAULT": 0.0
         }
     ]
 }*/
@@ -258,6 +271,9 @@ void main() {
     color /= max(totalWeight, 0.001);
     color *= brightness;
     color *= tint.rgb;
+
+    vec4 inputColor = IMG_THIS_PIXEL(inputImage);
+    color = mix(color, inputColor.rgb, blendAmount);
 
     gl_FragColor = vec4(color, tint.a);
 }

@@ -16,4 +16,14 @@ curl -sL "https://cs.nyu.edu/~perlin/paper445.pdf" \
   -o "$DIR/perlin-improving-noise-2002.pdf"
 echo "  perlin-improving-noise-2002.pdf"
 
+curl -skL "https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=c57dfd79e1a887408d56d60a7a89055b367bcab6" \
+  -o "$DIR/knutsson-westin-normalized-convolution-1993.pdf"
+echo "  knutsson-westin-normalized-convolution-1993.pdf"
+
+echo ""
+echo "Manual downloads (ACM blocks automated requests, but open access in browser):"
+echo "  Perlin, 'An Image Synthesizer' (SIGGRAPH 1985)"
+echo "    https://dl.acm.org/doi/epdf/10.1145/325165.325247"
+echo "    → save as: $DIR/perlin-image-synthesizer-siggraph-1985.pdf"
+echo ""
 echo "Done."
