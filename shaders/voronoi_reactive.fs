@@ -120,6 +120,22 @@
             "MIN": 0.0,
             "MAX": 1.0,
             "DEFAULT": 0.0
+        },
+        {
+            "NAME": "imageInfluence",
+            "LABEL": "Image Influence",
+            "TYPE": "float",
+            "MIN": 0.0,
+            "MAX": 1.0,
+            "DEFAULT": 0.0
+        },
+        {
+            "NAME": "kernelRadius",
+            "LABEL": "NC Kernel",
+            "TYPE": "float",
+            "MIN": 0.01,
+            "MAX": 0.5,
+            "DEFAULT": 0.1
         }
     ]
 }*/
@@ -165,10 +181,18 @@ vec3 hsv2rgb(vec3 c) {
 }
 
 
+// --- Image certainty: luminance as importance ---
+
+float imageCertainty(vec2 seedUV) {
+    vec4 col = IMG_NORM_PIXEL(inputImage, clamp(seedUV, 0.0, 1.0));
+    return dot(col.rgb, vec3(0.299, 0.587, 0.114));
+}
+
+
 // --- Voronoi for a single layer ---
 // Returns vec4(F1, F2, cellID.x, cellID.y)
 
-vec4 voronoiLayer(vec2 uv, float scale, float animTime) {
+vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
     vec2 p = uv * scale;
     vec2 cell = floor(p);
     vec2 localP = fract(p);
@@ -176,6 +200,10 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime) {
     float f1 = 10.0;
     float f2 = 10.0;
     vec2 nearestCell = vec2(0.0);
+
+    // NC accumulators: weighted certainty across neighbor seeds
+    float certWeightedSum = 0.0;
+    float certWeightSum = 0.0;
 
     for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
@@ -185,6 +213,19 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime) {
             // Seed position within cell: hash in [0.1, 0.9] for safe margin
             vec2 seedHash = hash2(cellPos);
             vec2 seedBase = seedHash * 0.8 + 0.1;
+
+            // Sample image certainty at seed position
+            vec2 seedWorldUV = (cellPos + seedBase) / scale;
+            vec2 seedNormUV = vec2(seedWorldUV.x / aspect, seedWorldUV.y);
+            float cert = imageCertainty(seedNormUV) * imageInfluence;
+
+            // NC: accumulate certainty with Gaussian applicability
+            vec2 point0 = neighbor + seedBase;
+            float dist0 = length(point0 - localP);
+            float kr = max(kernelRadius * scale, 0.5);
+            float ncWeight = exp(-0.5 * (dist0 * dist0) / (kr * kr));
+            certWeightedSum += cert * ncWeight;
+            certWeightSum += ncWeight;
 
             // Circular drift: smooth orbit around base
             float angle = 6.2832 * seedHash.x + animTime * (0.3 + seedHash.y * 0.7);
@@ -198,17 +239,21 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime) {
             vec2 rB = hash2(cellPos + vec2((phase + 1.0) * 17.3, (phase + 1.0) * 7.1)) - 0.5;
             vec2 chaoticDrift = mix(rA, rB, blend) * 0.7;
 
-            vec2 drift = mix(circularDrift, chaoticDrift, driftChaos);
+            // Certainty modulates drift: high cert → anchored, low cert → free drift
+            float driftScale = 1.0 - cert * 0.8;
+            vec2 drift = mix(circularDrift, chaoticDrift, driftChaos) * driftScale;
             vec2 point = neighbor + seedBase + drift;
 
+            // Certainty shrinks effective distance → tighter cells in important regions
             float dist = length(point - localP);
+            float effectiveDist = dist / (1.0 + cert * 2.0);
 
-            if (dist < f1) {
+            if (effectiveDist < f1) {
                 f2 = f1;
-                f1 = dist;
+                f1 = effectiveDist;
                 nearestCell = cellPos;
-            } else if (dist < f2) {
-                f2 = dist;
+            } else if (effectiveDist < f2) {
+                f2 = effectiveDist;
             }
         }
     }
@@ -243,7 +288,7 @@ void main() {
         float layerWeight = pow(layerMix, fl);
         if (layer == 0) layerWeight = 1.0;
 
-        vec4 vor = voronoiLayer(uv, scale, animTime + fl * 1.7);
+        vec4 vor = voronoiLayer(uv, scale, animTime + fl * 1.7, aspect);
 
         float edgeDist = vor.y - vor.x;
 

@@ -1,45 +1,58 @@
 # Normalized Convolution Image Input
 
-## Status: Draft — requirements need refinement
+## Status: Requirements locked
 
 ## Origin
 Knutsson & Westin 1993 "Normalized and Differential Convolution" (see `docs/references/knutsson-westin-normalized-convolution-1993.pdf`)
 
-## Core Idea
-Replace the hash-based grid point placement in the Voronoi shader with a normalized convolution pipeline that operates on sparse point data. This produces a soft Voronoi tessellation with smooth blended boundaries instead of hard nearest-neighbor edges.
+## Concept
+Use normalized convolution to derive a **spatially-varying density/certainty field** from the input image. This field biases where Voronoi seed points cluster and how they behave, producing a Voronoi tessellation that loosely tracks the image structure while remaining noisy and drifting.
 
-## What Normalized Convolution Does
-Given sparse samples with certainty values:
-1. **Splat** — Place points into a sparse field. Certainty `c = 1` at sample locations, `c = 0` elsewhere.
-2. **Blur** — Convolve both `c * T` (signal × certainty) and `c` (certainty alone) with a Gaussian kernel (the "applicability function").
-3. **Normalize** — Divide: `result = (G * cT) / (G * c)`
+The performer's silhouette/features emerge from **cell density patterns**, not from color reproduction. The result is a Voronoi interpretation of the image, not a reconstruction.
 
-This reconstructs a continuous field from sparse irregular samples, with adaptive smoothing (more smoothing where samples are sparse).
+## How It Works
 
-## Open Questions
+### 1. Sparse sample the input image
+- At each Voronoi cell, sample the input image at the seed point location
+- Image brightness (or luminance) at each sample becomes the **certainty** value
+- Sampling density is a controllable parameter
 
-### Point source
-- [ ] Are points procedurally generated (random scatter, replacing the grid hash)?
-- [ ] Or derived from an input image (e.g., feature points, thresholded samples)?
-- [ ] Or both modes?
+### 2. Normalized convolution → density field
+- Apply NC (K&W eq. 12) to the sparse certainty samples:
+  `densityField = (G * c) / (G * 1)` — a smooth reconstruction of local image "importance"
+- The Gaussian applicability function controls the reconstruction radius
+- High-certainty regions (bright/high-contrast) → dense cells
+- Low-certainty regions (dark/flat) → sparse cells, large, noise-dominated
 
-### Output interpretation
-- [ ] Soft cell field (each pixel gets a blended cell identity) — replaces F1/F2 distance entirely
-- [ ] Or point map generation only — feed reconstructed positions into traditional Voronoi distance
-- [ ] How does this interact with the existing 3-layer system?
+### 3. Density field biases Voronoi seeds
+- **Seed attraction**: in high-density regions, seeds cluster tighter (effective scale increases)
+- **Drift behavior**: low certainty → seeds drift freely (existing chaotic animation dominates). High certainty → seeds anchor toward image features
+- The existing noise/drift system remains — certainty modulates its influence, not replaces it
 
-### Image input
-- [ ] Does this feature add an image input to the shader (making it an image filter instead of a generator)?
-- [ ] If so, what does the image provide — point positions? Cell colors? Certainty field?
+### 4. Visual result
+- Voronoi tessellation that loosely follows image content
+- Always noisy, always drifting — never a clean reconstruction
+- Performer's shape readable through cell density, not color
 
-### Kernel control
-- [ ] Applicability function shape — Gaussian? Tunable alpha/beta as in K&W eq. 4?
-- [ ] Should kernel width map to existing `edgeWidth` or be a new parameter?
+## Parameters
 
-### GPU implementation
-- [ ] Single-pass approximation or multi-pass (splat → blur → normalize)?
-- [ ] ISF supports persistent buffers — viable for multi-pass?
-- [ ] Performance budget relative to current 3-layer Voronoi
+| Name | Description | Range | Default |
+|------|-------------|-------|---------|
+| `sampleDensity` | How many image samples per cell region | 0.0–1.0 | 0.5 |
+| `imageInfluence` | How strongly the image certainty biases seed placement | 0.0–1.0 | 0.5 |
+| `kernelRadius` | Applicability function width (reconstruction smoothness) | 0.01–0.5 | 0.1 |
+
+Existing parameters (`density`, `driftSpeed`, `driftChaos`, etc.) continue to work — `imageInfluence` blends between pure noise (0) and image-driven (1).
+
+## Implementation Approach
+- Single-pass, computed inline in the Voronoi seed loop
+- No multi-pass / persistent buffers needed for v1
+- Sample `inputImage` at seed positions using `IMG_NORM_PIXEL`
+- Compute luminance → certainty per seed
+- Use certainty to modulate seed offset and drift amplitude
+
+## Dependencies
+- `webcam-image-input` feature (done — `inputImage` available)
 
 ## References
 - Knutsson & Westin, CVPR 1993 — Normalized and Differential Convolution
