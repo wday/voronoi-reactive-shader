@@ -155,6 +155,7 @@ impl PboTransfer {
         let prev = 1 - self.current_download;
         let pbo = self.download_pbos[prev];
 
+        let mut copied = false;
         unsafe {
             gl::BindBuffer(gl::PIXEL_PACK_BUFFER, pbo);
             // MapBuffer returns a CPU-accessible pointer to the PBO data
@@ -165,13 +166,14 @@ impl PboTransfer {
                 let len = dest.len().min(src.len());
                 dest[..len].copy_from_slice(&src[..len]);
                 gl::UnmapBuffer(gl::PIXEL_PACK_BUFFER);
+                copied = true;
             }
             gl::BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
         }
 
         // Flip: next frame we'll write into this PBO, read from the other
         self.current_download = 1 - self.current_download;
-        true
+        copied
     }
 
     /// Upload frame data from RAM into a GPU texture via PBO.
@@ -197,12 +199,14 @@ impl PboTransfer {
             );
             // Map for CPU write access
             let ptr = gl::MapBuffer(gl::PIXEL_UNPACK_BUFFER, gl::WRITE_ONLY);
-            if !ptr.is_null() {
-                let dst = std::slice::from_raw_parts_mut(ptr as *mut u8, self.frame_size);
-                let len = data.len().min(dst.len());
-                dst[..len].copy_from_slice(&data[..len]); // memcpy into PBO
-                gl::UnmapBuffer(gl::PIXEL_UNPACK_BUFFER);
+            if ptr.is_null() {
+                gl::BindBuffer(gl::PIXEL_UNPACK_BUFFER, 0);
+                return;
             }
+            let dst = std::slice::from_raw_parts_mut(ptr as *mut u8, self.frame_size);
+            let len = data.len().min(dst.len());
+            dst[..len].copy_from_slice(&data[..len]); // memcpy into PBO
+            gl::UnmapBuffer(gl::PIXEL_UNPACK_BUFFER);
 
             // With PBO bound, glTexSubImage2D reads from PBO (DMA, not CPU)
             gl::BindTexture(gl::TEXTURE_2D, texture);

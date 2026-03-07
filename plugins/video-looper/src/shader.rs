@@ -338,9 +338,10 @@ impl PassthroughShader {
             gl::BindVertexArray(0);
 
             // Clean up GL state (good practice in a plugin — don't leak bindings)
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
             gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+            // Restore TEXTURE0 as active unit — shared GL hosts expect this default
+            gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, 0);
 
             gl::UseProgram(0);

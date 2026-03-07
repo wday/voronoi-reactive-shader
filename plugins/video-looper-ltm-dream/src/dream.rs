@@ -119,43 +119,39 @@ impl SimpleFFGLInstance for DreamLooper {
         let trail_opacity = self.params.trail_opacity();
         let trail_length = self.params.trail_length();
 
+        let cu = &shaders.composite_uniforms;
         shaders.composite.use_program();
         unsafe {
             // Bind live input to texture unit 0
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
-            gl::Uniform1i(shaders.composite.uniform_loc("u_input"), 0);
+            gl::Uniform1i(cu.input, 0);
 
             // Bind tier array textures to units 1-4
             for (i, tier_opt) in self.pyramid.tiers.iter().enumerate() {
                 if let Some(tier) = tier_opt {
                     gl::ActiveTexture(gl::TEXTURE1 + i as u32);
                     gl::BindTexture(gl::TEXTURE_2D_ARRAY, tier.array_texture);
-
-                    let tier_name = format!("u_tier{}", i);
-                    gl::Uniform1i(shaders.composite.uniform_loc(&tier_name), 1 + i as i32);
-
-                    let ptr_name = format!("u_write_ptr{}", i);
-                    gl::Uniform1f(shaders.composite.uniform_loc(&ptr_name), tier.write_ptr as f32);
-
-                    let depth_name = format!("u_depth{}", i);
-                    gl::Uniform1f(shaders.composite.uniform_loc(&depth_name), tier.depth as f32);
+                    gl::Uniform1i(cu.tiers[i], 1 + i as i32);
+                    gl::Uniform1f(cu.write_ptrs[i], tier.write_ptr as f32);
+                    gl::Uniform1f(cu.depths[i], tier.depth as f32);
                 }
             }
 
-            gl::Uniform1i(shaders.composite.uniform_loc("u_active_tiers"), active_tiers as i32);
-            gl::Uniform1f(shaders.composite.uniform_loc("u_trail_opacity"), trail_opacity);
-            gl::Uniform1f(shaders.composite.uniform_loc("u_trail_length"), trail_length);
+            gl::Uniform1i(cu.active_tiers, active_tiers as i32);
+            gl::Uniform1f(cu.trail_opacity, trail_opacity);
+            gl::Uniform1f(cu.trail_length, trail_length);
         }
         shaders.quad.draw();
 
-        // Clean up texture bindings
+        // Clean up texture bindings, restore TEXTURE0 as active unit
         unsafe {
-            for i in 0..5 {
+            for i in (0..5).rev() {
                 gl::ActiveTexture(gl::TEXTURE0 + i);
                 gl::BindTexture(gl::TEXTURE_2D, 0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
             }
+            // Loop ends with TEXTURE0 active (iterating in reverse)
         }
         shaders.composite.unuse();
 

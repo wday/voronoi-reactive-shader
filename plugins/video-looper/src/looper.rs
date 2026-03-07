@@ -189,7 +189,9 @@ impl VideoLooper {
         }
         let beat_duration = 60.0 / bpm;
         let loop_duration = self.params.loop_beats() as f32 * beat_duration;
-        (loop_duration * 30.0).round().max(1.0) as usize
+        let frames = (loop_duration * 30.0).round().max(1.0) as usize;
+        // Clamp to ring buffer capacity (900 frames)
+        frames.min(900)
     }
 }
 

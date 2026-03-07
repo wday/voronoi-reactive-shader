@@ -268,11 +268,27 @@ impl Drop for ShaderProgram {
     }
 }
 
+/// Cached uniform locations for the composite shader.
+/// Queried once at init, used every frame without string lookups.
+pub struct CompositeUniforms {
+    pub input: GLint,
+    pub tiers: [GLint; 4],
+    pub write_ptrs: [GLint; 4],
+    pub depths: [GLint; 4],
+    pub active_tiers: GLint,
+    pub trail_opacity: GLint,
+    pub trail_length: GLint,
+}
+
 /// All three shader programs used by the dream looper.
 pub struct DreamShaders {
     pub passthrough: ShaderProgram,
     pub downsample: ShaderProgram,
     pub composite: ShaderProgram,
+    pub composite_uniforms: CompositeUniforms,
+    loc_pt_input: GLint,
+    loc_ds_source_tier: GLint,
+    loc_ds_source_layer: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -287,7 +303,41 @@ impl DreamShaders {
         // locations are identical. Set up once with any program.
         quad.setup_attrs(passthrough.program);
 
-        Self { passthrough, downsample, composite, quad }
+        // Cache all uniform locations at init time
+        let loc_pt_input = passthrough.uniform_loc("u_input");
+        let loc_ds_source_tier = downsample.uniform_loc("u_source_tier");
+        let loc_ds_source_layer = downsample.uniform_loc("u_source_layer");
+
+        let composite_uniforms = CompositeUniforms {
+            input: composite.uniform_loc("u_input"),
+            tiers: [
+                composite.uniform_loc("u_tier0"),
+                composite.uniform_loc("u_tier1"),
+                composite.uniform_loc("u_tier2"),
+                composite.uniform_loc("u_tier3"),
+            ],
+            write_ptrs: [
+                composite.uniform_loc("u_write_ptr0"),
+                composite.uniform_loc("u_write_ptr1"),
+                composite.uniform_loc("u_write_ptr2"),
+                composite.uniform_loc("u_write_ptr3"),
+            ],
+            depths: [
+                composite.uniform_loc("u_depth0"),
+                composite.uniform_loc("u_depth1"),
+                composite.uniform_loc("u_depth2"),
+                composite.uniform_loc("u_depth3"),
+            ],
+            active_tiers: composite.uniform_loc("u_active_tiers"),
+            trail_opacity: composite.uniform_loc("u_trail_opacity"),
+            trail_length: composite.uniform_loc("u_trail_length"),
+        };
+
+        Self {
+            passthrough, downsample, composite, composite_uniforms,
+            loc_pt_input, loc_ds_source_tier, loc_ds_source_layer,
+            quad,
+        }
     }
 
     /// Copy a 2D input texture into the current write layer of a tier.
@@ -296,7 +346,7 @@ impl DreamShaders {
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
-            gl::Uniform1i(self.passthrough.uniform_loc("u_input"), 0);
+            gl::Uniform1i(self.loc_pt_input, 0);
         }
         self.quad.draw();
         unsafe {
@@ -311,8 +361,8 @@ impl DreamShaders {
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D_ARRAY, source_array_tex);
-            gl::Uniform1i(self.downsample.uniform_loc("u_source_tier"), 0);
-            gl::Uniform1f(self.downsample.uniform_loc("u_source_layer"), source_layer);
+            gl::Uniform1i(self.loc_ds_source_tier, 0);
+            gl::Uniform1f(self.loc_ds_source_layer, source_layer);
         }
         self.quad.draw();
         unsafe {
