@@ -49,7 +49,7 @@ elif [ "$PTYPE" = "rust" ]; then
 
     echo "==> Building Rust plugin: $NAME (crate: $PCRATE)"
     cd /mnt/c && cmd.exe /c \
-        "pushd ${WIN_PROJECT}\\ffgl-rs&&set PATH=${WIN_CARGO_BIN};${WIN_SCOOP};%PATH%&&set CARGO_TARGET_DIR=${WIN_TARGET}&&cargo build --release -p ${PCRATE}"
+        "pushd ${WIN_PROJECT}\\plugins&&set PATH=${WIN_CARGO_BIN};${WIN_SCOOP};%PATH%&&set CARGO_TARGET_DIR=${WIN_TARGET}&&cargo build --release -p ${PCRATE}"
 
     echo "==> Built: ${TARGET_DIR}/${PDLL}"
 else
