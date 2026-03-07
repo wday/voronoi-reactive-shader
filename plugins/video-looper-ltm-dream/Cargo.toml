@@ -1,0 +1,13 @@
+[package]
+name = "video-looper-ltm-dream"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ffgl-core = { workspace = true }
+gl = { workspace = true }
+gl_loader = { workspace = true }
+tracing = { workspace = true }

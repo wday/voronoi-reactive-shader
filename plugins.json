@@ -11,6 +11,12 @@
       "type": "rust",
       "crate": "video-looper",
       "dll": "video_looper.dll"
+    },
+    {
+      "name": "video_looper_ltm_dream",
+      "type": "rust",
+      "crate": "video-looper-ltm-dream",
+      "dll": "video_looper_ltm_dream.dll"
     }
   ]
 }
