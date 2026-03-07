@@ -19,7 +19,6 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      # Fix submodule URL BEFORE checkout fetches submodules
       - uses: actions/checkout@v4
 
       - name: Fix submodule URL (SSH → HTTPS for CI)
@@ -31,16 +30,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # Windows: LLVM needed for bindgen's libclang
       - name: Install LLVM (Windows)
         if: matrix.platform == 'windows'
         run: choco install llvm -y
 
-      # macOS: Apple Clang provides libclang for bindgen.
-      # xcrun provides SDK path for OpenGL framework headers.
-      # No extra installs needed.
-
-      - name: Build all ISF plugins
+      - name: Build ISF plugins
         shell: bash
         run: |
           cd ffgl-rs
@@ -57,6 +51,21 @@ jobs:
             cargo build --release -p ffgl-isf
           done
 
+      - name: Build Rust plugins
+        shell: bash
+        run: |
+          cd plugins
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('../plugins.json'))['plugins']:
+              if p['type'] == 'rust':
+                print(f\"{p['name']}|{p['crate']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME CRATE DLL <<< "$row"
+            echo "==> Building Rust plugin: $NAME (crate: $CRATE)"
+            cargo build --release -p "$CRATE"
+          done
+
       - name: Package artifacts (Windows)
         if: matrix.platform == 'windows'
         shell: bash
@@ -66,11 +75,17 @@ jobs:
             import json
             for p in json.load(open('plugins.json'))['plugins']:
               if p['type'] == 'isf':
-                print(f\"{p['name']}|{p['dll']}\")
+                print(f\"{p['name']}|{p['dll']}|ffgl-rs/target/release/ffgl_isf.dll\")
+              elif p['type'] == 'rust':
+                print(f\"{p['name']}|{p['dll']}|plugins/target/release/{p['dll']}\")
           "); do
-            IFS='|' read -r NAME DLL <<< "$row"
-            cp "ffgl-rs/target/release/ffgl_isf.dll" "artifacts/$DLL"
-            echo "==> Packaged: artifacts/$DLL"
+            IFS='|' read -r NAME DLL SRC <<< "$row"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "artifacts/$DLL"
+              echo "==> Packaged: artifacts/$DLL"
+            else
+              echo "==> WARNING: $SRC not found, skipping $DLL"
+            fi
           done
 
       - name: Package artifacts (macOS)
@@ -82,14 +97,24 @@ jobs:
             import json
             for p in json.load(open('plugins.json'))['plugins']:
               if p['type'] == 'isf':
-                print(f\"{p['name']}|{p['dll']}\")
+                lib = 'ffgl-rs/target/release/libffgl_isf.dylib'
+              elif p['type'] == 'rust':
+                name = p['dll'].replace('.dll', '')
+                lib = f'plugins/target/release/lib{name}.dylib'
+              else:
+                continue
+              print(f\"{p['name']}|{p['dll']}|{lib}\")
           "); do
-            IFS='|' read -r NAME DLL <<< "$row"
+            IFS='|' read -r NAME DLL SRC <<< "$row"
             BUNDLE_NAME="${DLL%.dll}"
             BUNDLE_DIR="artifacts/${BUNDLE_NAME}.bundle"
             mkdir -p "$BUNDLE_DIR/Contents/MacOS"
-            cp "ffgl-rs/target/release/libffgl_isf.dylib" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
-            echo "==> Packaged: $BUNDLE_DIR"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
+              echo "==> Packaged: $BUNDLE_DIR"
+            else
+              echo "==> WARNING: $SRC not found, skipping $BUNDLE_NAME"
+            fi
           done
           cd artifacts && for d in *.bundle; do zip -r "${d%.bundle}-macos.zip" "$d"; done
 

@@ -36,7 +36,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: choco install llvm -y
 
-      - name: Build all ISF plugins
+      - name: Build ISF plugins
         shell: bash
         run: |
           cd ffgl-rs
@@ -47,10 +47,25 @@ jobs:
                 print(f\"{p['name']}|{p['shader']}|{p['dll']}\")
           "); do
             IFS='|' read -r NAME SHADER DLL <<< "$row"
-            echo "==> Building: $NAME"
+            echo "==> Building ISF plugin: $NAME"
             ISF_SOURCE="$(cd .. && pwd)/$SHADER" \
             ISF_NAME="$NAME" \
             cargo build --release -p ffgl-isf
+          done
+
+      - name: Build Rust plugins
+        shell: bash
+        run: |
+          cd plugins
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('../plugins.json'))['plugins']:
+              if p['type'] == 'rust':
+                print(f\"{p['name']}|{p['crate']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME CRATE DLL <<< "$row"
+            echo "==> Building Rust plugin: $NAME (crate: $CRATE)"
+            cargo build --release -p "$CRATE"
           done
 
       - name: Package (Windows)
@@ -62,10 +77,15 @@ jobs:
             import json
             for p in json.load(open('plugins.json'))['plugins']:
               if p['type'] == 'isf':
-                print(f\"{p['name']}|{p['dll']}\")
+                print(f\"{p['name']}|{p['dll']}|ffgl-rs/target/release/ffgl_isf.dll\")
+              elif p['type'] == 'rust':
+                print(f\"{p['name']}|{p['dll']}|plugins/target/release/{p['dll']}\")
           "); do
-            IFS='|' read -r NAME DLL <<< "$row"
-            cp "ffgl-rs/target/release/ffgl_isf.dll" "dist/$DLL"
+            IFS='|' read -r NAME DLL SRC <<< "$row"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "dist/$DLL"
+              echo "==> Packaged: dist/$DLL"
+            fi
           done
 
       - name: Package (macOS)
@@ -77,13 +97,21 @@ jobs:
             import json
             for p in json.load(open('plugins.json'))['plugins']:
               if p['type'] == 'isf':
-                print(f\"{p['name']}|{p['dll']}\")
+                lib = 'ffgl-rs/target/release/libffgl_isf.dylib'
+              elif p['type'] == 'rust':
+                name = p['dll'].replace('.dll', '')
+                lib = f'plugins/target/release/lib{name}.dylib'
+              else:
+                continue
+              print(f\"{p['name']}|{p['dll']}|{lib}\")
           "); do
-            IFS='|' read -r NAME DLL <<< "$row"
+            IFS='|' read -r NAME DLL SRC <<< "$row"
             BUNDLE_NAME="${DLL%.dll}"
             BUNDLE_DIR="dist/${BUNDLE_NAME}.bundle"
             mkdir -p "$BUNDLE_DIR/Contents/MacOS"
-            cp "ffgl-rs/target/release/libffgl_isf.dylib" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
+            fi
           done
           cd dist && for d in *.bundle; do zip -r "${d%.bundle}-macos.zip" "$d"; done
 
@@ -119,7 +147,6 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
 
-          # Collect all release files
           FILES=()
           for f in release-windows/*.dll; do
             [ -f "$f" ] && FILES+=("$f")
@@ -128,7 +155,6 @@ jobs:
             [ -f "$f" ] && FILES+=("$f")
           done
 
-          # Build plugin list for release notes
           PLUGIN_LIST=$(python3 -c "
           import json
           for p in json.load(open('plugins.json'))['plugins']:
