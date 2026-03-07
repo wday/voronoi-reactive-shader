@@ -45,6 +45,22 @@ pub struct Tier {
 
 /// The full pyramid: 4 tiers of texture arrays.
 pub struct Pyramid {
+    // `[T; N]` is a fixed-size array — a general language type, not just
+    // initialization syntax. It means "exactly N elements of type T, inline."
+    //
+    // In C:     Option<Tier> tiers[4];      // stack-allocated, fixed size
+    // In Rust:  [Option<Tier>; NUM_TIERS]   // same thing
+    //
+    // Contrast with Vec<T> which is heap-allocated and growable (like T* + len + cap).
+    // [T; N] is always stack-allocated (or inline in the parent struct), always
+    // exactly N elements, size known at compile time. You see it everywhere:
+    //   [u8; 4]         — 4 bytes (an IP address, a pixel)
+    //   [f32; 16]       — a 4x4 matrix
+    //   [GLuint; 2]     — the PBO ping-pong pair in video-looper
+    //   [Option<Tier>; 4] — our 4 pyramid tiers, each either Some(tier) or None
+    //
+    // The `; N` part MUST be a compile-time constant (const, literal, or const fn).
+    // That's why NUM_TIERS is `pub const`, not `let`.
     pub tiers: [Option<Tier>; NUM_TIERS],
     pub initialized: bool,
 }
@@ -59,6 +75,21 @@ impl Pyramid {
 
     /// Allocate all tiers based on input resolution.
     /// Each tier gets its own GL_TEXTURE_2D_ARRAY and FBO.
+
+    // `&mut self` means this method needs exclusive (mutable) access to the
+    // struct. In C terms: `void init(Pyramid* self)` where you're going to
+    // write through the pointer.
+    //
+    // The implication: the CALLER must have a mutable reference to the Pyramid.
+    // If someone else is reading from `self.tiers` at the same time, Rust won't
+    // let you call this — compile error. This is the borrow checker enforcing
+    // "no simultaneous readers and writers."
+    //
+    // Contrast with `&self` (shared/read-only borrow): multiple callers can
+    // hold `&self` at once, but none of them can modify the struct.
+    // `bind_layer_for_write` below uses `&self` — it only reads tier data to
+    // pass to GL, even though GL itself mutates GPU state. Rust doesn't track
+    // GPU-side mutations, only Rust-side memory.
     pub fn init(&mut self, input_width: u32, input_height: u32) {
         self.cleanup();
 
@@ -69,6 +100,20 @@ impl Pyramid {
             let mut tex: GLuint = 0;
             let mut fbo: GLuint = 0;
 
+            // `unsafe` is required because the `gl::` functions are FFI calls
+            // into the OpenGL driver (a C library). Rust can't verify:
+            //   1. That the GL context is valid and current on this thread
+            //   2. That the arguments are correct (e.g. tex is a valid handle)
+            //   3. That the driver won't corrupt memory
+            //
+            // In C, ALL of these calls would "just work" (or silently corrupt).
+            // Rust makes you explicitly opt in with `unsafe` — it's not saying
+            // "this is dangerous," it's saying "the compiler can't prove this
+            // is correct, so YOU are responsible for correctness."
+            //
+            // Every GL call in this codebase is unsafe for the same reason.
+            // The `unsafe` block doesn't make the code run differently — it
+            // just tells the compiler "I've audited this, trust me."
             unsafe {
                 // Allocate the texture array: w × h × depth layers, RGBA8
                 gl::GenTextures(1, &mut tex);

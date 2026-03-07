@@ -48,22 +48,27 @@ void main() {
 ";
 
 // ── Composite: sample from all tiers, blend weighted ──
-// Each tier contributes based on its weight. Lower tiers (deeper history,
-// lower resolution) have lower weight, creating the "dream trail" effect.
+//
+// Each tier samples multiple "taps" spread across its temporal depth.
+// Tier 0 (64 frames, full res): recent sharp echoes
+// Tier 3 (4096 frames, 1/8 res): deep blurry memory
+//
+// The trail_length param controls how far back to reach (0 = shallow, 1 = full depth).
+// trail_opacity controls the blend strength of the trail vs live input.
 static FS_COMPOSITE: &str = "
 #version 150
 in vec2 v_uv;
 out vec4 out_color;
 
-uniform sampler2D u_input;          // live input (always full weight)
+uniform sampler2D u_input;
 uniform sampler2DArray u_tier0;
 uniform sampler2DArray u_tier1;
 uniform sampler2DArray u_tier2;
 uniform sampler2DArray u_tier3;
-uniform int u_active_tiers;         // how many tiers to sample (1-4)
-uniform float u_trail_opacity;      // overall trail strength
+uniform int u_active_tiers;
+uniform float u_trail_opacity;
+uniform float u_trail_length;       // 0..1: how deep into history to reach
 
-// Write pointers and depths for temporal offset calculation
 uniform float u_write_ptr0;
 uniform float u_write_ptr1;
 uniform float u_write_ptr2;
@@ -73,13 +78,31 @@ uniform float u_depth1;
 uniform float u_depth2;
 uniform float u_depth3;
 
-// Per-tier weight (decreasing with depth = increasing dreaminess)
-const float TIER_WEIGHTS[4] = float[4](0.8, 0.4, 0.2, 0.1);
-
 // Sample a frame from a tier at a given temporal offset from the write head
 vec4 sampleTier(sampler2DArray tier, float writePtr, float depth, float offset) {
     float index = mod(writePtr - offset, depth);
     return texture(tier, vec3(v_uv, index));
+}
+
+// Sample multiple taps from a tier, spread across its depth.
+// Returns weighted average with exponential falloff into the past.
+vec4 sampleTierMulti(sampler2DArray tier, float writePtr, float depth, float reach) {
+    // reach = how far into history (fraction of depth)
+    float maxOffset = max(depth * reach, 2.0);
+    vec4 accum = vec4(0.0);
+    float total_w = 0.0;
+
+    // 4 taps per tier, exponentially spaced
+    // tap 0: ~6% into history (recent echo)
+    // tap 3: ~100% of reach (deepest memory)
+    for (int t = 0; t < 4; t++) {
+        float frac = float(t + 1) / 4.0;       // 0.25, 0.5, 0.75, 1.0
+        float offset = frac * maxOffset;
+        float w = 1.0 / (1.0 + float(t));      // 1.0, 0.5, 0.33, 0.25 — recency bias
+        accum += w * sampleTier(tier, writePtr, depth, offset);
+        total_w += w;
+    }
+    return accum / total_w;
 }
 
 void main() {
@@ -87,31 +110,33 @@ void main() {
     vec4 trail = vec4(0.0);
     float total_weight = 0.0;
 
-    // Sample the most recent frame from each active tier
-    // The offset of 1.0 means \"one frame ago\" — the last fully written frame
+    // Per-tier weight: sharper (recent) tiers dominate, blurrier (deep) tiers are subtle
+    // But all contribute to create the layered persistence effect
+    float reach = max(u_trail_length, 0.05);    // minimum 5% reach so there's always SOME trail
+
     if (u_active_tiers >= 1) {
-        float w = TIER_WEIGHTS[0];
-        trail += w * sampleTier(u_tier0, u_write_ptr0, u_depth0, 1.0);
+        float w = 0.6;
+        trail += w * sampleTierMulti(u_tier0, u_write_ptr0, u_depth0, reach);
         total_weight += w;
     }
     if (u_active_tiers >= 2) {
-        float w = TIER_WEIGHTS[1];
-        trail += w * sampleTier(u_tier1, u_write_ptr1, u_depth1, 1.0);
+        float w = 0.3;
+        trail += w * sampleTierMulti(u_tier1, u_write_ptr1, u_depth1, reach);
         total_weight += w;
     }
     if (u_active_tiers >= 3) {
-        float w = TIER_WEIGHTS[2];
-        trail += w * sampleTier(u_tier2, u_write_ptr2, u_depth2, 1.0);
+        float w = 0.15;
+        trail += w * sampleTierMulti(u_tier2, u_write_ptr2, u_depth2, reach);
         total_weight += w;
     }
     if (u_active_tiers >= 4) {
-        float w = TIER_WEIGHTS[3];
-        trail += w * sampleTier(u_tier3, u_write_ptr3, u_depth3, 1.0);
+        float w = 0.08;
+        trail += w * sampleTierMulti(u_tier3, u_write_ptr3, u_depth3, reach);
         total_weight += w;
     }
 
     if (total_weight > 0.0) {
-        trail /= total_weight;  // normalize
+        trail /= total_weight;
     }
 
     out_color = mix(live, trail, u_trail_opacity);

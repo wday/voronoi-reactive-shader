@@ -117,6 +117,7 @@ impl SimpleFFGLInstance for DreamLooper {
 
         let active_tiers = self.params.active_tiers();
         let trail_opacity = self.params.trail_opacity();
+        let trail_length = self.params.trail_length();
 
         shaders.composite.use_program();
         unsafe {
@@ -144,6 +145,7 @@ impl SimpleFFGLInstance for DreamLooper {
 
             gl::Uniform1i(shaders.composite.uniform_loc("u_active_tiers"), active_tiers as i32);
             gl::Uniform1f(shaders.composite.uniform_loc("u_trail_opacity"), trail_opacity);
+            gl::Uniform1f(shaders.composite.uniform_loc("u_trail_length"), trail_length);
         }
         shaders.quad.draw();
 

@@ -55,6 +55,12 @@ impl DreamParams {
         ((v * 4.0).ceil() as usize).clamp(1, 4)
     }
 
+    /// How far into each tier's history to reach (0..1 fraction of depth).
+    /// Same knob as active_tiers — higher = more tiers AND deeper reach.
+    pub fn trail_length(&self) -> f32 {
+        self.values[PARAM_TRAIL_LENGTH]
+    }
+
     /// Overall opacity weight for the trail compositing.
     pub fn trail_opacity(&self) -> f32 {
         self.values[PARAM_TRAIL_OPACITY]
