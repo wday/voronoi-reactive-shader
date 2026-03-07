@@ -1,6 +1,6 @@
 # Video Looper (FFGL Plugin)
 
-## Status: Draft — controls settling, degradation model defined
+## Status: v1 scope locked
 
 ## Concept
 A frame-level video looper implemented as a standalone FFGL plugin for Resolume. Captures input frames to a system RAM ring buffer with beat-quantized timing and controllable tape-style degradation. Designed to compose with other effects (including the Voronoi shader) via Resolume's effect chain, transforms, and masking.
@@ -15,7 +15,12 @@ A frame-level video looper implemented as a standalone FFGL plugin for Resolume.
   - 4 sec → ~960MB
   - 30 sec → ~7.2GB
   - 2 min → ~28.8GB
-- Optional: LZ4 compression (~2:1 ratio, ~4 GB/s throughput) to extend duration
+- Optional (future): LZ4 compression (~2:1 ratio, ~4 GB/s throughput) to extend duration
+
+### Memory allocation
+- **Allocate on first frame** — read resolution from input texture, allocate buffer
+- **Resolution change** — detect via input texture dimensions each frame. On change: flush buffer, reallocate. Current loop is lost (acceptable — resolution changes are rare during performance)
+- Max loop duration: 30 seconds (configurable at compile time for v1)
 
 ### GPU ↔ RAM transfer
 - **Capture** (GPU → RAM): PBO double-buffering to avoid pipeline stalls
@@ -83,20 +88,18 @@ Loop duration derived from Resolume's host BPM: `duration = loopBeats × (60 / B
 - Pass-through when not looping (`dryWet` irrelevant, input = output)
 - During playback: `dryWet = 0.0` = live input, `1.0` = loop only
 
-## Open questions
+## v1 scope decisions
+- **Overdub**: deferred to v2
+- **Memory**: allocate on first frame, flush on resolution change
+- **loopBeats change during playback**: truncate to new length (mod existing write index)
+- **Visual feedback**: deferred to v2
 
-### Overdub
-- [ ] Overdub mode: record new frames blended onto existing loop?
-- [ ] Overdub mix parameter (how much new vs existing)?
-
-### Memory management
-- [ ] Max loop duration as a startup config (pre-allocate RAM)?
-- [ ] Dynamic allocation (grow buffer as needed, risk allocation stalls)?
-- [ ] Resolution control — record at half-res to double max duration?
-
-### State
-- [ ] What happens when `loopBeats` changes during playback? Truncate? Re-record?
-- [ ] Visual feedback for loop position (useful for performer)?
+## Future (v2+)
+- Overdub mode with mix parameter
+- LZ4 compression for extended duration
+- Half-resolution recording option
+- Visual feedback for loop position
+- Beat-phase alignment (start recording on next beat)
 
 ## Dependencies
 - `ffgl-rs` framework (Rust FFGL plugin scaffold)
