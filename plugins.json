@@ -1,0 +1,10 @@
+{
+  "plugins": [
+    {
+      "name": "voronoi_reactive",
+      "type": "isf",
+      "shader": "shaders/voronoi_reactive.fs",
+      "dll": "voronoi_reactive.dll"
+    }
+  ]
+}

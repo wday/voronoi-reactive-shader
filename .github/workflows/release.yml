@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix submodule URL (SSH → HTTPS for CI)
+        run: |
+          git config --file .gitmodules submodule.ffgl-rs.url https://github.com/wday/ffgl-rs.git
+          git submodule sync
+          git submodule update --init --recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM (Windows)
+        if: matrix.platform == 'windows'
+        run: choco install llvm -y
+
+      - name: Build all ISF plugins
+        shell: bash
+        run: |
+          cd ffgl-rs
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('../plugins.json'))['plugins']:
+              if p['type'] == 'isf':
+                print(f\"{p['name']}|{p['shader']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME SHADER DLL <<< "$row"
+            echo "==> Building: $NAME"
+            ISF_SOURCE="$(cd .. && pwd)/$SHADER" \
+            ISF_NAME="$NAME" \
+            cargo build --release -p ffgl-isf
+          done
+
+      - name: Package (Windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('plugins.json'))['plugins']:
+              if p['type'] == 'isf':
+                print(f\"{p['name']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME DLL <<< "$row"
+            cp "ffgl-rs/target/release/ffgl_isf.dll" "dist/$DLL"
+          done
+
+      - name: Package (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          mkdir -p dist
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('plugins.json'))['plugins']:
+              if p['type'] == 'isf':
+                print(f\"{p['name']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME DLL <<< "$row"
+            BUNDLE_NAME="${DLL%.dll}"
+            BUNDLE_DIR="dist/${BUNDLE_NAME}.bundle"
+            mkdir -p "$BUNDLE_DIR/Contents/MacOS"
+            cp "ffgl-rs/target/release/libffgl_isf.dylib" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
+          done
+          cd dist && for d in *.bundle; do zip -r "${d%.bundle}-macos.zip" "$d"; done
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: release-windows
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos
+          path: release-macos
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          # Collect all release files
+          FILES=()
+          for f in release-windows/*.dll; do
+            [ -f "$f" ] && FILES+=("$f")
+          done
+          for f in release-macos/*-macos.zip; do
+            [ -f "$f" ] && FILES+=("$f")
+          done
+
+          # Build plugin list for release notes
+          PLUGIN_LIST=$(python3 -c "
+          import json
+          for p in json.load(open('plugins.json'))['plugins']:
+              print(f\"- **{p['name']}** ({p['type']})\")
+          ")
+
+          gh release create "$TAG" "${FILES[@]}" \
+            --title "$TAG" \
+            --notes "$(cat <<EOF
+          ## Plugins
+
+          $PLUGIN_LIST
+
+          ## Installation
+
+          ### Windows (Resolume Avenue/Arena)
+          1. Download the \`.dll\` file(s)
+          2. Copy to: \`C:\\Users\\<you>\\Documents\\Resolume Avenue\\Extra Effects\\\`
+             (or \`Resolume Arena\\Extra Effects\\\`)
+          3. Restart Resolume
+
+          ### macOS (Resolume Avenue/Arena)
+          1. Download and unzip the \`-macos.zip\` file(s)
+          2. Copy the \`.bundle\` folder to: \`~/Library/Graphics/FreeFrame Plug-Ins/\`
+             (or \`~/Documents/Resolume Arena/Extra Effects/\`)
+          3. Restart Resolume
+          EOF
+          )"
