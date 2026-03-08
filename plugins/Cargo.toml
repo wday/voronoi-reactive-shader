@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "video-looper",
+    "video-looper-ltm-dream",
+]
+
+[workspace.dependencies]
+ffgl-core = { path = "../ffgl-rs/ffgl-core" }
+gl = "0.14.0"
+gl_loader = "0.1.0"
+tracing = { version = "0.1.40", features = ["log"] }
+
+[profile.release]
+debug = false
+panic = "abort"

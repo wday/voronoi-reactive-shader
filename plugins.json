@@ -1,0 +1,22 @@
+{
+  "plugins": [
+    {
+      "name": "voronoi_reactive",
+      "type": "isf",
+      "shader": "shaders/voronoi_reactive.fs",
+      "dll": "voronoi_reactive.dll"
+    },
+    {
+      "name": "video_looper",
+      "type": "rust",
+      "crate": "video-looper",
+      "dll": "video_looper.dll"
+    },
+    {
+      "name": "video_looper_ltm_dream",
+      "type": "rust",
+      "crate": "video-looper-ltm-dream",
+      "dll": "video_looper_ltm_dream.dll"
+    }
+  ]
+}

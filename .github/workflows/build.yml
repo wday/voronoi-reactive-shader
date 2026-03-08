@@ -1,0 +1,125 @@
+name: Build FFGL Plugins
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix submodule URL (SSH → HTTPS for CI)
+        run: |
+          git config --file .gitmodules submodule.ffgl-rs.url https://github.com/wday/ffgl-rs.git
+          git submodule sync
+          git submodule update --init --recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM (Windows)
+        if: matrix.platform == 'windows'
+        run: choco install llvm -y
+
+      - name: Build ISF plugins
+        shell: bash
+        run: |
+          cd ffgl-rs
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('../plugins.json'))['plugins']:
+              if p['type'] == 'isf':
+                print(f\"{p['name']}|{p['shader']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME SHADER DLL <<< "$row"
+            echo "==> Building ISF plugin: $NAME ($SHADER)"
+            ISF_SOURCE="$(cd .. && pwd)/$SHADER" \
+            ISF_NAME="$NAME" \
+            cargo build --release -p ffgl-isf
+          done
+
+      - name: Build Rust plugins
+        shell: bash
+        run: |
+          cd plugins
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('../plugins.json'))['plugins']:
+              if p['type'] == 'rust':
+                print(f\"{p['name']}|{p['crate']}|{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME CRATE DLL <<< "$row"
+            echo "==> Building Rust plugin: $NAME (crate: $CRATE)"
+            cargo build --release -p "$CRATE"
+          done
+
+      - name: Package artifacts (Windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('plugins.json'))['plugins']:
+              if p['type'] == 'isf':
+                print(f\"{p['name']}|{p['dll']}|ffgl-rs/target/release/ffgl_isf.dll\")
+              elif p['type'] == 'rust':
+                print(f\"{p['name']}|{p['dll']}|plugins/target/release/{p['dll']}\")
+          "); do
+            IFS='|' read -r NAME DLL SRC <<< "$row"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "artifacts/$DLL"
+              echo "==> Packaged: artifacts/$DLL"
+            else
+              echo "==> WARNING: $SRC not found, skipping $DLL"
+            fi
+          done
+
+      - name: Package artifacts (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          for row in $(python3 -c "
+            import json
+            for p in json.load(open('plugins.json'))['plugins']:
+              if p['type'] == 'isf':
+                lib = 'ffgl-rs/target/release/libffgl_isf.dylib'
+              elif p['type'] == 'rust':
+                name = p['dll'].replace('.dll', '')
+                lib = f'plugins/target/release/lib{name}.dylib'
+              else:
+                continue
+              print(f\"{p['name']}|{p['dll']}|{lib}\")
+          "); do
+            IFS='|' read -r NAME DLL SRC <<< "$row"
+            BUNDLE_NAME="${DLL%.dll}"
+            BUNDLE_DIR="artifacts/${BUNDLE_NAME}.bundle"
+            mkdir -p "$BUNDLE_DIR/Contents/MacOS"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
+              echo "==> Packaged: $BUNDLE_DIR"
+            else
+              echo "==> WARNING: $SRC not found, skipping $BUNDLE_NAME"
+            fi
+          done
+          cd artifacts && for d in *.bundle; do zip -r "${d%.bundle}-macos.zip" "$d"; done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffgl-plugins-${{ matrix.platform }}
+          path: artifacts/*

@@ -1,42 +1,60 @@
-# Build and deploy FFGL plugin from WSL via Windows cargo
+# Plugin build and deploy system
+# Reads plugins.json for the plugin registry.
+#
 # Usage:
-#   make build       - compile the FFGL DLL
-#   make deploy      - copy DLL to Resolume Extra Effects
-#   make release     - build + deploy
-#   make preview     - start browser preview server
+#   make build                          - build all plugins
+#   make deploy                         - deploy all plugins to Resolume
+#   make release                        - build + deploy all
+#   make build PLUGIN=voronoi_reactive  - build one plugin
+#   make deploy PLUGIN=voronoi_reactive - deploy one plugin
+#   make preview                        - start browser preview server
+#   make list                           - list registered plugins
 
-SHADER        := shaders/voronoi_reactive.fs
-ISF_NAME      := voronoi_reactive
-WSL_DISTRO    := Ubuntu
 WSL_USER      := alien
-
-# Windows paths (no trailing spaces!)
-WIN_CARGO_BIN := C:\Users\$(WSL_USER)\scoop\apps\rustup\current\.cargo\bin
-WIN_SCOOP     := C:\Users\$(WSL_USER)\scoop\shims
-WIN_TARGET    := C:\Users\$(WSL_USER)\.cargo-target\ffgl-rs
-WIN_ISF_SRC   := Z:\home\$(WSL_USER)\dev\voronoi-reactive-shader\$(subst /,\,$(SHADER))
-WIN_FFGL_DIR  := Z:\home\$(WSL_USER)\dev\voronoi-reactive-shader\ffgl-rs
-
-# Linux paths
-DLL_OUTPUT    := /mnt/c/Users/$(WSL_USER)/.cargo-target/ffgl-rs/release/ffgl_isf.dll
+REGISTRY      := plugins.json
+TARGET_DIR    := /mnt/c/Users/$(WSL_USER)/.cargo-target/ffgl-rs/release
 RESOLUME_DIR  := /mnt/c/Users/$(WSL_USER)/Documents/Resolume Avenue/Extra Effects
 
-.PHONY: build deploy release preview clean
+PLUGINS_ALL   := $(shell python3 -c "import json; [print(p['name']) for p in json.load(open('$(REGISTRY)'))['plugins']]" 2>/dev/null)
+
+.PHONY: build deploy release preview clean list
+
+list:
+	@python3 -c "\
+	import json; \
+	plugins = json.load(open('$(REGISTRY)'))['plugins']; \
+	print('Registered plugins:'); \
+	[print(f\"  {p['name']:20s} type={p['type']:5s} dll={p['dll']}\") for p in plugins]"
 
 build:
-	cd /mnt/c && cmd.exe /c \
-		"pushd \\\\wsl$$\$(WSL_DISTRO)\home\$(WSL_USER)\dev\voronoi-reactive-shader\ffgl-rs&&set PATH=$(WIN_CARGO_BIN);$(WIN_SCOOP);%PATH%&&set ISF_SOURCE=$(WIN_ISF_SRC)&&set ISF_NAME=$(ISF_NAME)&&set CARGO_TARGET_DIR=$(WIN_TARGET)&&cargo build --release -p ffgl-isf"
+ifdef PLUGIN
+	./scripts/build-plugin.sh $(PLUGIN)
+else
+	@for p in $(PLUGINS_ALL); do ./scripts/build-plugin.sh $$p; done
+endif
 
-deploy: $(DLL_OUTPUT)
-	@mkdir -p "$(RESOLUME_DIR)"
-	cp "$(DLL_OUTPUT)" "$(RESOLUME_DIR)/ffgl_isf.dll"
-	@echo "Deployed to $(RESOLUME_DIR)/ffgl_isf.dll"
-	@echo "Restart Resolume to load the updated plugin."
+deploy:
+ifdef PLUGIN
+	@$(MAKE) --no-print-directory _deploy_one NAME=$(PLUGIN)
+else
+	@for p in $(PLUGINS_ALL); do $(MAKE) --no-print-directory _deploy_one NAME=$$p; done
+endif
 
 release: build deploy
+
+_deploy_one:
+	$(eval PDLL := $(shell python3 -c "import json; p=[p for p in json.load(open('$(REGISTRY)'))['plugins'] if p['name']=='$(NAME)'][0]; print(p['dll'])"))
+	@mkdir -p "$(RESOLUME_DIR)"
+	@if [ -f "$(TARGET_DIR)/$(PDLL)" ]; then \
+		cp "$(TARGET_DIR)/$(PDLL)" "$(RESOLUME_DIR)/$(PDLL)"; \
+		echo "==> Deployed $(PDLL) to $(RESOLUME_DIR)/"; \
+	else \
+		echo "==> ERROR: $(TARGET_DIR)/$(PDLL) not found. Run 'make build PLUGIN=$(NAME)' first." >&2; \
+		exit 1; \
+	fi
 
 preview:
 	./scripts/preview.sh
 
 clean:
-	rm -f "$(DLL_OUTPUT)"
+	rm -f "$(TARGET_DIR)"/*.dll
