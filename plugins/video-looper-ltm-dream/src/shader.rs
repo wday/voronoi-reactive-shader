@@ -101,7 +101,8 @@ void main() {
         hsv.y = clamp(hsv.y + u_sat_shift, 0.0, 1.0);
         prev_rgb = hsv2rgb(hsv);
     }
-    vec3 color = max(live.rgb, prev_rgb);
+    // Screen blend: brightens without the per-channel hard edges that max() creates
+    vec3 color = live.rgb + prev_rgb - live.rgb * prev_rgb;
     // Fold luminance above threshold — inverts instead of clamping
     color = fold(color, u_fold);
     out_color = vec4(clamp(color, 0.0, 1.0), 1.0);
