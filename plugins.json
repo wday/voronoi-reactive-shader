@@ -2,6 +2,7 @@
   "plugins": [
     {
       "name": "voronoi_reactive",
+      "display_name": "Voronoi Reactive",
       "type": "isf",
       "shader": "shaders/voronoi_reactive.fs",
       "dll": "voronoi_reactive.dll"
@@ -17,6 +18,12 @@
       "type": "rust",
       "crate": "video-looper-ltm-dream",
       "dll": "video_looper_ltm_dream.dll"
+    },
+    {
+      "name": "delay_line_module",
+      "type": "rust",
+      "crate": "delay-line-module",
+      "dll": "delay_line_module.dll"
     }
   ]
 }
