@@ -3,14 +3,17 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 4;
+pub const NUM_PARAMS: usize = 7;
 pub const PARAM_MODE: usize = 0;
 pub const PARAM_CHANNEL: usize = 1;
-pub const PARAM_SUBDIVISION: usize = 2;
-pub const PARAM_FEEDBACK: usize = 3;
+pub const PARAM_SYNC_MODE: usize = 2;
+pub const PARAM_SUBDIVISION: usize = 3;
+pub const PARAM_DELAY_MS: usize = 4;
+pub const PARAM_DELAY_FRAMES: usize = 5;
+pub const PARAM_FEEDBACK: usize = 6;
 
 /// Subdivision options: (label, beats)
-const SUBDIVISIONS: [(& str, f32); 7] = [
+const SUBDIVISIONS: [(&str, f32); 7] = [
     ("1/16",   0.25),
     ("1/8",    0.5),
     ("1/4",    1.0),
@@ -19,6 +22,9 @@ const SUBDIVISIONS: [(& str, f32); 7] = [
     ("2 bars", 8.0),
     ("4 bars", 16.0),
 ];
+
+const MAX_DELAY_MS: f32 = 5000.0;
+const MAX_DELAY_FRAMES: u32 = 899;
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [
@@ -29,7 +35,8 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             default: Some(0.0), // Receive
             elements: Some(vec![
                 (CString::new("Receive").unwrap(), 0.0),
-                (CString::new("Send").unwrap(), 1.0),
+                (CString::new("Send").unwrap(), 0.5),
+                (CString::new("Tap").unwrap(), 1.0),
             ]),
             ..Default::default()
         },
@@ -46,7 +53,19 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ]),
             ..Default::default()
         },
-        // 2: Subdivision (Receive only)
+        // 2: Sync Mode
+        SimpleParamInfo {
+            name: CString::new("Sync Mode").unwrap(),
+            param_type: ParameterTypes::Option,
+            default: Some(0.0), // Subdivision
+            elements: Some(vec![
+                (CString::new("Subdivision").unwrap(), 0.0),
+                (CString::new("Ms").unwrap(), 0.5),
+                (CString::new("Frames").unwrap(), 1.0),
+            ]),
+            ..Default::default()
+        },
+        // 3: Subdivision
         SimpleParamInfo {
             name: CString::new("Subdivision").unwrap(),
             param_type: ParameterTypes::Option,
@@ -62,7 +81,21 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ),
             ..Default::default()
         },
-        // 3: Feedback (Receive only)
+        // 4: Delay Ms (0.0–1.0 mapped to 0–5000ms)
+        SimpleParamInfo {
+            name: CString::new("Delay Ms").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(500.0 / MAX_DELAY_MS), // 500ms
+            ..Default::default()
+        },
+        // 5: Delay Frames (0.0–1.0 mapped to 1–899)
+        SimpleParamInfo {
+            name: CString::new("Delay Frames").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(30.0 / MAX_DELAY_FRAMES as f32),
+            ..Default::default()
+        },
+        // 6: Feedback (Receive only)
         SimpleParamInfo {
             name: CString::new("Feedback").unwrap(),
             param_type: ParameterTypes::Standard,
@@ -80,6 +113,14 @@ pub fn param_info(index: usize) -> &'static dyn ParamInfo {
 pub enum Mode {
     Receive,
     Send,
+    Tap,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SyncMode {
+    Subdivision,
+    Ms,
+    Frames,
 }
 
 pub struct DelayParams {
@@ -89,7 +130,15 @@ pub struct DelayParams {
 impl DelayParams {
     pub fn new() -> Self {
         Self {
-            values: [0.0, 0.0, 2.0 / 6.0, 0.5],
+            values: [
+                0.0,                            // Mode: Receive
+                0.0,                            // Channel: 1
+                0.0,                            // Sync Mode: Subdivision
+                2.0 / 6.0,                     // Subdivision: 1/4
+                500.0 / MAX_DELAY_MS,           // Delay Ms: 500ms
+                30.0 / MAX_DELAY_FRAMES as f32, // Delay Frames: 30
+                0.5,                            // Feedback
+            ],
         }
     }
 
@@ -104,7 +153,14 @@ impl DelayParams {
     }
 
     pub fn mode(&self) -> Mode {
-        if self.values[PARAM_MODE] > 0.5 { Mode::Send } else { Mode::Receive }
+        let v = self.values[PARAM_MODE];
+        if v < 0.33 {
+            Mode::Receive
+        } else if v < 0.67 {
+            Mode::Send
+        } else {
+            Mode::Tap
+        }
     }
 
     pub fn channel(&self) -> usize {
@@ -112,11 +168,31 @@ impl DelayParams {
         ((v * 4.0).min(3.0)) as usize
     }
 
+    pub fn sync_mode(&self) -> SyncMode {
+        let v = self.values[PARAM_SYNC_MODE];
+        if v < 0.33 {
+            SyncMode::Subdivision
+        } else if v < 0.67 {
+            SyncMode::Ms
+        } else {
+            SyncMode::Frames
+        }
+    }
+
     pub fn subdivision_beats(&self) -> f32 {
         let v = self.values[PARAM_SUBDIVISION];
         let count = SUBDIVISIONS.len() as f32;
         let index = (v * count).min(count - 1.0) as usize;
         SUBDIVISIONS[index].1
+    }
+
+    pub fn delay_ms(&self) -> f32 {
+        self.values[PARAM_DELAY_MS] * MAX_DELAY_MS
+    }
+
+    pub fn delay_frames_raw(&self) -> u32 {
+        let v = self.values[PARAM_DELAY_FRAMES];
+        (v * MAX_DELAY_FRAMES as f32).round().max(1.0) as u32
     }
 
     pub fn feedback(&self) -> f32 {

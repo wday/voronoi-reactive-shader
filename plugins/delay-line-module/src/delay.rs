@@ -5,7 +5,7 @@ use gl::types::*;
 use ffgl_core::handler::simplified::SimpleFFGLInstance;
 use ffgl_core::{FFGLData, GLInput};
 
-use crate::params::{self, DelayParams, Mode, NUM_PARAMS};
+use crate::params::{self, DelayParams, Mode, SyncMode, NUM_PARAMS};
 use crate::registry;
 use crate::shader::DelayShaders;
 
@@ -19,12 +19,23 @@ pub struct DelayLine {
 
 impl DelayLine {
     fn delay_frames(&self, bpm: f32) -> u32 {
-        if bpm <= 0.0 {
-            return 30;
-        }
-        let beat_duration = 60.0 / bpm;
-        let delay_secs = self.params.subdivision_beats() * beat_duration;
-        let d = (delay_secs * self.fps_estimate).round() as u32;
+        let d = match self.params.sync_mode() {
+            SyncMode::Subdivision => {
+                if bpm <= 0.0 {
+                    return 30;
+                }
+                let beat_duration = 60.0 / bpm;
+                let delay_secs = self.params.subdivision_beats() * beat_duration;
+                (delay_secs * self.fps_estimate).round() as u32
+            }
+            SyncMode::Ms => {
+                let delay_secs = self.params.delay_ms() / 1000.0;
+                (delay_secs * self.fps_estimate).round() as u32
+            }
+            SyncMode::Frames => {
+                self.params.delay_frames_raw()
+            }
+        };
         d.clamp(1, registry::buffer_depth() - 1)
     }
 
@@ -110,6 +121,42 @@ impl DelayLine {
         }
         shaders.receive_pass(input_tex, buf_tex, read_layer, feedback);
     }
+
+    fn draw_tap(&mut self, data: &FFGLData, host_fbo: GLint, host_viewport: [GLint; 4]) {
+        let channel = self.params.channel();
+        let shaders = self.shaders.as_ref().unwrap();
+
+        // If no Send has written to this channel yet, output black
+        let buf_info = match registry::read_channel(channel) {
+            Some(info) => info,
+            None => {
+                unsafe {
+                    gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
+                    gl::Viewport(
+                        host_viewport[0], host_viewport[1],
+                        host_viewport[2], host_viewport[3],
+                    );
+                    gl::ClearColor(0.0, 0.0, 0.0, 0.0);
+                    gl::Clear(gl::COLOR_BUFFER_BIT);
+                }
+                return;
+            }
+        };
+
+        let (buf_tex, write_pos, _buf_w, _buf_h) = buf_info;
+        let depth = registry::buffer_depth();
+        let d = self.delay_frames(data.host_beat.bpm);
+        let read_layer = ((write_pos + depth - d) % depth) as f32;
+
+        unsafe {
+            gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
+            gl::Viewport(
+                host_viewport[0], host_viewport[1],
+                host_viewport[2], host_viewport[3],
+            );
+        }
+        shaders.read_pass(buf_tex, read_layer);
+    }
 }
 
 impl SimpleFFGLInstance for DelayLine {
@@ -135,15 +182,14 @@ impl SimpleFFGLInstance for DelayLine {
         let input_tex = if !frame_data.textures.is_empty() {
             frame_data.textures[0].Handle as GLuint
         } else {
-            unsafe {
-                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
-                gl::Clear(gl::COLOR_BUFFER_BIT);
-            }
-            return;
+            0
         };
 
-        let width = frame_data.textures[0].Width;
-        let height = frame_data.textures[0].Height;
+        let (width, height) = if !frame_data.textures.is_empty() {
+            (frame_data.textures[0].Width, frame_data.textures[0].Height)
+        } else {
+            (1920, 1080) // fallback for Tap with no input
+        };
 
         self.update_fps();
 
@@ -166,7 +212,12 @@ impl SimpleFFGLInstance for DelayLine {
 
         match self.params.mode() {
             Mode::Send => self.draw_send(data, input_tex, width, height, host_fbo, host_viewport),
-            Mode::Receive => self.draw_receive(data, input_tex, host_fbo, host_viewport),
+            Mode::Receive => {
+                if input_tex != 0 {
+                    self.draw_receive(data, input_tex, host_fbo, host_viewport);
+                }
+            }
+            Mode::Tap => self.draw_tap(data, host_fbo, host_viewport),
         }
 
         // Restore host GL state
@@ -181,14 +232,21 @@ impl SimpleFFGLInstance for DelayLine {
             let mode_str = match self.params.mode() {
                 Mode::Send => "send",
                 Mode::Receive => "receive",
+                Mode::Tap => "tap",
+            };
+            let sync_str = match self.params.sync_mode() {
+                SyncMode::Subdivision => "subdivision",
+                SyncMode::Ms => "ms",
+                SyncMode::Frames => "frames",
             };
             tracing::info!(
                 frame = self.frame_count,
                 mode = mode_str,
                 channel = self.params.channel() + 1,
+                sync = sync_str,
                 fps = format!("{:.1}", self.fps_estimate),
                 bpm = format!("{:.1}", data.host_beat.bpm),
-                subdivision = format!("{:.2}", self.params.subdivision_beats()),
+                delay_frames = self.delay_frames(data.host_beat.bpm),
                 feedback = format!("{:.2}", self.params.feedback()),
                 "status"
             );
@@ -216,7 +274,7 @@ impl SimpleFFGLInstance for DelayLine {
             unique_id: *b"DLMd",
             name: *b"Delay Line      ",
             ty: ffgl_core::info::PluginType::Effect,
-            about: "Send/receive delay line for modular feedback loops".to_string(),
+            about: "Send/receive/tap delay line for modular feedback loops".to_string(),
             description: "Beat-synced delay with shared buffer channels".to_string(),
         }
     }
