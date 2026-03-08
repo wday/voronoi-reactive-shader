@@ -88,9 +88,11 @@ void main() {
         // Reflect: fold UV back into 0..1 range (kaleidoscope)
         transformed_uv = 1.0 - abs(mod(transformed_uv, 2.0) - 1.0);
     } else {
-        // Clip: zero out when UV leaves the frame
-        inBounds = step(0.0, transformed_uv.x) * step(transformed_uv.x, 1.0)
-                 * step(0.0, transformed_uv.y) * step(transformed_uv.y, 1.0);
+        // Soft clip: fade to black over a few pixels at the frame boundary
+        // to prevent hard edges from compounding through feedback iterations
+        float edge = 0.005;
+        inBounds = smoothstep(0.0, edge, transformed_uv.x) * smoothstep(1.0, 1.0 - edge, transformed_uv.x)
+                 * smoothstep(0.0, edge, transformed_uv.y) * smoothstep(1.0, 1.0 - edge, transformed_uv.y);
     }
     vec4 prev = texture(u_prev_tier, vec3(transformed_uv, u_prev_layer)) * inBounds;
     // Hue + saturation shift — accumulates through echoes
@@ -122,14 +124,13 @@ void main() {
 }
 ";
 
-// ── Composite: sample from all tiers, blend weighted ──
+// ── Composite: one tap per tier at musically-timed offsets ──
 //
-// Each tier samples multiple "taps" spread across its temporal depth.
-// Tier 0 (64 frames, full res): recent sharp echoes
-// Tier 3 (4096 frames, 1/8 res): deep blurry memory
+// Each tier provides one echo at a doubling delay:
+//   T0: 1× subdivision (sharp)   T1: 2× (soft)
+//   T2: 4× (dreamy)              T3: 8× (deep memory)
 //
-// The trail_length param controls how far back to reach (0 = shallow, 1 = full depth).
-// trail_opacity controls the blend strength of the trail vs live input.
+// output = dry * live + wet * (tap1*level1 + tap2*level2 + ...)
 static FS_COMPOSITE: &str = "
 #version 150
 in vec2 v_uv;
@@ -140,13 +141,6 @@ uniform sampler2DArray u_tier0;
 uniform sampler2DArray u_tier1;
 uniform sampler2DArray u_tier2;
 uniform sampler2DArray u_tier3;
-uniform int u_active_tiers;
-uniform float u_trail_opacity;
-uniform float u_trail_length;       // 0..1: how deep into history to reach
-uniform float u_weight0;
-uniform float u_weight1;
-uniform float u_weight2;
-uniform float u_weight3;
 
 uniform float u_write_ptr0;
 uniform float u_write_ptr1;
@@ -157,54 +151,30 @@ uniform float u_depth1;
 uniform float u_depth2;
 uniform float u_depth3;
 
-// Sample a frame from a tier at a given temporal offset from the write head
-vec4 sampleTier(sampler2DArray tier, float writePtr, float depth, float offset) {
+uniform float u_delay;    // base delay in frames (1× subdivision)
+uniform float u_dry;
+uniform float u_wet;
+uniform float u_tap0;     // T0 level (1× delay, sharp)
+uniform float u_tap1;     // T1 level (2× delay, soft)
+uniform float u_tap2;     // T2 level (4× delay, dreamy)
+uniform float u_tap3;     // T3 level (8× delay, deep)
+
+vec4 sampleTap(sampler2DArray tier, float writePtr, float depth, float offset) {
     float index = mod(writePtr - offset, depth);
     return texture(tier, vec3(v_uv, index));
-}
-
-// Sample multiple taps from a tier, spread across its depth.
-// Returns weighted average with exponential falloff into the past.
-vec4 sampleTierMulti(sampler2DArray tier, float writePtr, float depth, float reach) {
-    // reach = how far into history (fraction of depth)
-    float maxOffset = max(depth * reach, 2.0);
-    vec4 accum = vec4(0.0);
-    float total_w = 0.0;
-
-    // 4 taps per tier, exponentially spaced
-    // tap 0: ~6% into history (recent echo)
-    // tap 3: ~100% of reach (deepest memory)
-    for (int t = 0; t < 4; t++) {
-        float frac = float(t + 1) / 4.0;       // 0.25, 0.5, 0.75, 1.0
-        float offset = frac * maxOffset;
-        float w = 1.0 / (1.0 + float(t));      // 1.0, 0.5, 0.33, 0.25 — recency bias
-        accum += w * sampleTier(tier, writePtr, depth, offset);
-        total_w += w;
-    }
-    return accum / total_w;
 }
 
 void main() {
     vec4 live = texture(u_input, v_uv);
     vec4 trail = vec4(0.0);
 
-    // Per-tier weight: raw, unnormalized — can overdrive above 100%
-    float reach = max(u_trail_length, 0.05);
+    // One tap per tier at doubling delay offsets
+    if (u_tap0 > 0.001) trail += u_tap0 * sampleTap(u_tier0, u_write_ptr0, u_depth0, u_delay);
+    if (u_tap1 > 0.001) trail += u_tap1 * sampleTap(u_tier1, u_write_ptr1, u_depth1, 2.0 * u_delay);
+    if (u_tap2 > 0.001) trail += u_tap2 * sampleTap(u_tier2, u_write_ptr2, u_depth2, 4.0 * u_delay);
+    if (u_tap3 > 0.001) trail += u_tap3 * sampleTap(u_tier3, u_write_ptr3, u_depth3, 8.0 * u_delay);
 
-    if (u_active_tiers >= 1 && u_weight0 > 0.001) {
-        trail += u_weight0 * sampleTierMulti(u_tier0, u_write_ptr0, u_depth0, reach);
-    }
-    if (u_active_tiers >= 2 && u_weight1 > 0.001) {
-        trail += u_weight1 * sampleTierMulti(u_tier1, u_write_ptr1, u_depth1, reach);
-    }
-    if (u_active_tiers >= 3 && u_weight2 > 0.001) {
-        trail += u_weight2 * sampleTierMulti(u_tier2, u_write_ptr2, u_depth2, reach);
-    }
-    if (u_active_tiers >= 4 && u_weight3 > 0.001) {
-        trail += u_weight3 * sampleTierMulti(u_tier3, u_write_ptr3, u_depth3, reach);
-    }
-
-    out_color = mix(live, trail, u_trail_opacity);
+    out_color = vec4(u_dry * live.rgb + u_wet * trail.rgb, 1.0);
 }
 ";
 
@@ -340,10 +310,10 @@ pub struct CompositeUniforms {
     pub tiers: [GLint; 4],
     pub write_ptrs: [GLint; 4],
     pub depths: [GLint; 4],
-    pub active_tiers: GLint,
-    pub trail_opacity: GLint,
-    pub trail_length: GLint,
-    pub weights: [GLint; 4],
+    pub delay: GLint,
+    pub dry: GLint,
+    pub wet: GLint,
+    pub taps: [GLint; 4],
 }
 
 /// Cached uniform locations for the ingest (feedback) shader.
@@ -423,14 +393,14 @@ impl DreamShaders {
                 composite.uniform_loc("u_depth2"),
                 composite.uniform_loc("u_depth3"),
             ],
-            active_tiers: composite.uniform_loc("u_active_tiers"),
-            trail_opacity: composite.uniform_loc("u_trail_opacity"),
-            trail_length: composite.uniform_loc("u_trail_length"),
-            weights: [
-                composite.uniform_loc("u_weight0"),
-                composite.uniform_loc("u_weight1"),
-                composite.uniform_loc("u_weight2"),
-                composite.uniform_loc("u_weight3"),
+            delay: composite.uniform_loc("u_delay"),
+            dry: composite.uniform_loc("u_dry"),
+            wet: composite.uniform_loc("u_wet"),
+            taps: [
+                composite.uniform_loc("u_tap0"),
+                composite.uniform_loc("u_tap1"),
+                composite.uniform_loc("u_tap2"),
+                composite.uniform_loc("u_tap3"),
             ],
         };
 

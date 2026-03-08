@@ -132,8 +132,12 @@ impl Pyramid {
                 );
                 gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
                 gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                // CLAMP_TO_BORDER returns black for out-of-bounds UVs instead of
+                // repeating the edge row/column (CLAMP_TO_EDGE), which caused
+                // visible lines when rotation/swirl maps UVs outside [0,1].
+                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_BORDER as i32);
+                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_BORDER as i32);
+                // Border color defaults to (0,0,0,0) — black/transparent
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
 
                 // FBO for rendering into individual layers

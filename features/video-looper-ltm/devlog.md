@@ -37,3 +37,46 @@ At 60fps that's 16ms — visually invisible. Fixed by:
 
 ### Result
 Fluid, beautiful motion trails. No stutter. DTTP architecture validated.
+
+## 2026-03-08 — Tuning fixes
+
+### Screen blend (diagonal lines fix)
+Replaced `max(live, prev)` with screen blend `live + prev - live * prev` in
+ingest shader. The per-channel `max()` created hard selection boundaries that
+compounded through feedback as visible diagonal lines.
+
+### GL state save/restore (gap fix)
+Resolume (or other effects) can leave GL_SCISSOR_TEST, GL_BLEND, GL_DEPTH_TEST
+enabled. These leaked into our FBO rendering passes, clipping/corrupting the
+stored frames. Now save and restore all three around the ingest/downsample passes.
+
+### Texture wrapping (edge repetition fix)
+Changed texture arrays from CLAMP_TO_EDGE to CLAMP_TO_BORDER. Edge pixels were
+being repeated when rotation/swirl mapped UVs outside [0,1]. Also softened the
+inBounds check from hard `step()` to `smoothstep()` so edges fade over a few
+pixels instead of creating hard lines that compound through feedback.
+
+## 2026-03-08 — Musical tap model redesign
+
+### Problem with original composite
+The multi-tap-per-tier composite with trail_length/trail_opacity/tier_weights was
+not musically meaningful. Taps were spread across raw frame depth, not synced to
+tempo. Parameters were overloaded (trail_length controlled both tier count and
+temporal depth).
+
+### New model: one tap per tier at doubling delays
+Each tier provides one echo at a musically-timed offset:
+- Tap 1 (T0, full res): 1× subdivision — sharp echo
+- Tap 2 (T1, half res): 2× subdivision — soft echo
+- Tap 3 (T2, quarter res): 4× subdivision — dreamy echo
+- Tap 4 (T3, eighth res): 8× subdivision — deep memory
+
+Resolution loss at longer delays IS the aesthetic. This plays to the pyramid's
+natural strengths instead of fighting them.
+
+### Parameter changes
+Removed: Trail Length, Trail Opacity, Weight T0-T3 (6 params)
+Added: Dry, Wet, Tap 1-4 (6 params, same total count)
+- Dry/Wet: independent level controls for live and echo mix
+- Tap 1-4: per-tier echo levels, 0-2 range (overdrivable), decaying defaults
+- Composite shader reduced to 4 single-tap samples + weighted sum

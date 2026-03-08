@@ -83,12 +83,22 @@ impl SimpleFFGLInstance for DreamLooper {
         let t_frame = Instant::now();
         let shaders = self.shaders.as_ref().unwrap();
 
-        // Save host FBO (Resolume renders into its own, not FBO 0)
+        // Save host FBO and GL state (Resolume or other effects may leave
+        // scissor/blend/depth enabled, which would corrupt our FBO writes)
         let mut host_fbo: GLint = 0;
         let mut host_viewport: [GLint; 4] = [0; 4];
+        let scissor_was_on;
+        let blend_was_on;
+        let depth_was_on;
         unsafe {
             gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut host_fbo);
             gl::GetIntegerv(gl::VIEWPORT, host_viewport.as_mut_ptr());
+            scissor_was_on = gl::IsEnabled(gl::SCISSOR_TEST) == gl::TRUE;
+            blend_was_on = gl::IsEnabled(gl::BLEND) == gl::TRUE;
+            depth_was_on = gl::IsEnabled(gl::DEPTH_TEST) == gl::TRUE;
+            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::BLEND);
+            gl::Disable(gl::DEPTH_TEST);
         }
 
         // ── STEP 1: Ingest — render input + beat-synced feedback into Tier 0 ──
@@ -126,7 +136,7 @@ impl SimpleFFGLInstance for DreamLooper {
 
         let t_after_downsample = t_frame.elapsed();
 
-        // ── STEP 3: Composite — sample all tiers → host FBO ──
+        // ── STEP 3: Composite — one tap per tier → host FBO ──
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(
@@ -135,10 +145,10 @@ impl SimpleFFGLInstance for DreamLooper {
             );
         }
 
-        let active_tiers = self.params.active_tiers();
-        let trail_opacity = self.params.trail_opacity();
-        let trail_length = self.params.trail_length();
-        let weights = self.params.tier_weights();
+        let delay_frames = self.params.delay_frames() as f32;
+        let dry = self.params.dry();
+        let wet = self.params.wet();
+        let taps = self.params.tap_levels();
 
         let cu = &shaders.composite_uniforms;
         shaders.composite.use_program();
@@ -159,11 +169,11 @@ impl SimpleFFGLInstance for DreamLooper {
                 }
             }
 
-            gl::Uniform1i(cu.active_tiers, active_tiers as i32);
-            gl::Uniform1f(cu.trail_opacity, trail_opacity);
-            gl::Uniform1f(cu.trail_length, trail_length);
-            for (i, &w) in weights.iter().enumerate() {
-                gl::Uniform1f(cu.weights[i], w);
+            gl::Uniform1f(cu.delay, delay_frames);
+            gl::Uniform1f(cu.dry, dry);
+            gl::Uniform1f(cu.wet, wet);
+            for (i, &t) in taps.iter().enumerate() {
+                gl::Uniform1f(cu.taps[i], t);
             }
         }
         shaders.quad.draw();
@@ -175,7 +185,10 @@ impl SimpleFFGLInstance for DreamLooper {
                 gl::BindTexture(gl::TEXTURE_2D, 0);
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
             }
-            // Loop ends with TEXTURE0 active (iterating in reverse)
+            // Restore GL state that Resolume/other effects may depend on
+            if scissor_was_on { gl::Enable(gl::SCISSOR_TEST); }
+            if blend_was_on { gl::Enable(gl::BLEND); }
+            if depth_was_on { gl::Enable(gl::DEPTH_TEST); }
         }
         shaders.composite.unuse();
 

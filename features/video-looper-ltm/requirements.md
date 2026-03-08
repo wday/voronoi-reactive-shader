@@ -4,90 +4,112 @@
 Logarithmic Video Persistence — plugin name: `video-looper-ltm-dream`
 
 ## Aesthetic Goal
-Fluid, ethereal, non-stuttering motion trails. High-detail edges of current
-movement "melt" into low-resolution temporal memory. Dreamy accumulation cloud
-when output feeds back into input.
+Musically-timed visual echoes that dissolve from sharp to dreamy. Recent echoes
+are crisp repetitions of the source; distant echoes melt into blurry temporal
+texture. Spatial transforms (rotation, swirl, scale, shift) compound through
+each echo, creating spirals and kaleidoscopic recursion synced to the beat.
 
 ## Core Principle
-Doubling temporal capacity (2x frames) for every halving of spatial resolution
-(0.5x). Every tier occupies the same VRAM. No CPU involvement in the hot path.
+One tap per pyramid tier. Each tier doubles the delay and halves the resolution.
+The resolution loss at longer delays IS the aesthetic — sharp echoes up close,
+dissolving into dream at distance. All GPU, zero CPU in the hot path.
 
 ## The Pyramid Structure
 
-| Tier | Resolution    | Buffer Depth | Total Time (60fps) | VRAM Cost |
-|------|---------------|--------------|---------------------|-----------|
-| 0    | 100% (1080p)  | 64 frames    | ~1.0s               | 1.0 unit  |
-| 1    | 50% (540p)    | 256 frames   | ~4.2s               | 1.0 unit  |
-| 2    | 25% (270p)    | 1,024 frames | ~17.0s              | 1.0 unit  |
-| 3    | 12.5% (135p)  | 4,096 frames | ~68.0s              | 1.0 unit  |
+| Tier | Resolution   | Delay         | Character      | VRAM Cost |
+|------|-------------|---------------|----------------|-----------|
+| T0   | 100% (full) | 1× subdivision | Sharp echo     | 1.0 unit  |
+| T1   | 50%         | 2× subdivision | Soft echo      | 1.0 unit  |
+| T2   | 25%         | 4× subdivision | Dreamy         | 1.0 unit  |
+| T3   | 12.5%       | 8× subdivision | Deep memory    | 1.0 unit  |
 
-**Result**: 4.0 units of VRAM (~2.1GB at 1080p) yields >1 minute of fluid
-temporal history. Tier depths are tunable — halving to 32/128/512/2048 cuts
-to ~1GB.
+Buffer depths per tier are sized to hold enough frames for the delay at 60fps.
+Tier 0 = 288 frames (~4.8s), each subsequent tier 2× as many at half resolution.
 
-## Data Flow: Continuous Demotion
+**Example at 120 BPM, 1/4 note subdivision (0.5s = 30 frames):**
+- Tap 1 (T0): 30 frames back, full resolution — crisp first echo
+- Tap 2 (T1): 60 frames back, half resolution — softer second echo
+- Tap 3 (T2): 120 frames back, quarter resolution — blurry third echo
+- Tap 4 (T3): 240 frames back, eighth resolution — deep temporal smear
 
-Unlike N-th frame skip (which causes stutter), this uses continuous
-downsampling. Every single frame contributes to every tier.
+## Data Flow
 
-1. **Ingest**: Write live frame to the current slot in Tier 0.
-2. **Continuous Drip** (every frame):
-   - Take newest frame from Tier 0, downsample, write to Tier 1.
-   - Take newest frame from Tier 1, downsample, write to Tier 2.
-   - Take newest frame from Tier 2, downsample, write to Tier 3.
-
-Because every tier receives a write every frame, motion at 25% resolution is
-just as smooth (60fps) as full resolution — just blurrier.
-
-## Shader: Multi-Scale Sampler
-
-The "dreamy" quality comes from sampling across tiers with linear interpolation
-to bridge resolution gaps.
-
-### Temporal Blur Logic
-Because Tier 3 is 1/8th the size of Tier 0, the GPU's hardware sampler
-naturally "smears" pixels. To enhance dreaminess, sample clusters of frames:
-
-```glsl
-// Logic for a single "Dream Tap"
-vec4 sampleDream(sampler2DArray tier, float offset, int depth) {
-    vec2 uv = TexCoord;
-    float index = mod(u_WritePtr - offset, float(depth));
-    return texture(tier, vec3(uv, index));
-}
+### Ingest (per frame)
+Each frame stored in Tier 0 is the live input composited with recursive feedback:
 ```
+stored_frame = screen(live, spatial_transform(prev_frame[delay]) * feedback)
+```
+Where `delay` = subdivision in frames, and `spatial_transform` applies rotation,
+swirl, scale, shift, hue shift, etc. These transforms compound through echoes —
+the Nth echo has N× the rotation, N× the swirl, etc.
 
-### Output Compositing
-Fragment shader mixes tiers using a weight curve:
-- T0: high opacity (sharp, recent)
-- T3: low opacity (blurred, ancient)
-- Gaussian or linear weight distribution (tunable parameter)
+### Downsample Chain (per frame)
+Every frame flows through all tiers via GPU bilinear downsample:
+```
+T0 (newest) → T1 → T2 → T3
+```
+No frame skipping — motion is 60fps smooth at every resolution tier.
 
-## Why This Eliminates Stutter
-- **No `if (frameCount % N == 0)` gating** — every frame flows through all tiers
-- **No CPU readback** — no PBO, no system RAM ring buffer, no memcpy
-- **No CPU pixel math** — downsampling is GPU shader passes
-- **Predictable VRAM** — if one tier fits, all tiers fit (same byte size)
+### Composite (per frame)
+One sample from each tier at its musically-timed offset:
+```glsl
+tap1 = texture(tier0, vec3(uv, write_ptr0 - 1 * delay));   // sharp
+tap2 = texture(tier1, vec3(uv, write_ptr1 - 2 * delay));   // soft
+tap3 = texture(tier2, vec3(uv, write_ptr2 - 4 * delay));   // dreamy
+tap4 = texture(tier3, vec3(uv, write_ptr3 - 8 * delay));   // deep
+
+trail = tap1 * tap1_level + tap2 * tap2_level + tap3 * tap3_level + tap4 * tap4_level;
+output = dry * live + wet * trail;
+```
+Tap levels default to a decay curve but are individually overdrivable (not
+group-normalized) for creative effects.
+
+## Parameters
+
+| # | Name         | Range     | Default | Description |
+|---|-------------|-----------|---------|-------------|
+| 0 | Dry         | 0–1       | 1.0     | Level of unprocessed live signal |
+| 1 | Wet         | 0–1       | 0.5     | Level of combined echo taps |
+| 2 | Tap 1       | 0–2       | 1.0     | T0 echo level (overdrivable) |
+| 3 | Tap 2       | 0–2       | 0.7     | T1 echo level |
+| 4 | Tap 3       | 0–2       | 0.4     | T2 echo level |
+| 5 | Tap 4       | 0–2       | 0.2     | T3 echo level |
+| 6 | Feedback    | 0–1       | 0.85    | Decay multiplier per recursive echo |
+| 7 | Shift X     | ±0.5 UV   | 0 (center) | Spatial shift per echo |
+| 8 | Shift Y     | ±0.5 UV   | 0 (center) | Spatial shift per echo |
+| 9 | Rotation    | ±180°     | 0 (center) | Z rotation per echo |
+| 10| Scale       | 0.5×–2.0× | 1.0× (center) | Zoom per echo |
+| 11| Swirl       | ±2.0 rad  | 0 (center) | Spiral twist per echo |
+| 12| Hue Shift   | ±180°     | 0 (center) | Color rotation per echo |
+| 13| Sat Shift   | ±0.5      | 0 (center) | Saturation shift per echo |
+| 14| Mirror      | off/on    | off     | Kaleidoscope edge reflection |
+| 15| Fold        | 0.1–1.0   | 1.0 (off) | Luminance fold threshold |
+| 16| BPM         | 50–200    | 120     | Tempo reference |
+| 17| Subdivision | discrete  | 1/4 note | Delay unit: 1/16, 1/8, 1/4, 1/2, 1 bar |
+
+**17 params** (down from 18). Removed: Trail Length, Trail Opacity, Weight T0-T3.
+Added: Dry, Wet, Tap 1-4.
+
+## Why One Tap Per Tier Works
+
+- **Musical timing**: delay doubles per tier (1×, 2×, 4×, 8×) — musically natural
+- **Natural blur**: resolution halves per tier — distant echoes ARE blurrier
+- **Simple mental model**: "4 echo taps, each further away and dreamier"
+- **Overdrive**: each tap is independent, can boost distant echoes for effect
+- **Dry/Wet**: separate controls, no coupling between live signal and echo mix
 
 ## GL Implementation Notes
-- Each tier is a `GL_TEXTURE_2D_ARRAY` — hardware-indexed by layer
-- Downsample chain: 3 shader passes per frame (T0->T1, T1->T2, T2->T3)
+- Each tier is a `GL_TEXTURE_2D_ARRAY` with `CLAMP_TO_BORDER` wrapping
+- Downsample chain: 3 shader passes per frame (T0→T1, T1→T2, T2→T3)
 - Write pointer per tier, wrapping at tier depth
+- Ingest uses soft-edge bounds checking (smoothstep) to prevent feedback line artifacts
+- GL state (scissor/blend/depth) saved and restored around FBO passes
 - All rendering stays in VRAM — zero CPU involvement in hot path
 
-## Recursive Feedback
-If the composited output is fed back into Tier 0 (via Resolume's effect chain
-or explicit feedback path), you get an accumulation cloud: sharp current motion
-dissolving into deep temporal blur.
-
-## Parameters (Initial)
-- **Trail Length**: controls how many tiers / how deep to sample
-- **Trail Opacity**: weight curve for tier mixing (sharp vs dreamy)
-- **Tier Depths**: global scale factor on buffer depths (VRAM vs history tradeoff)
-
 ## VRAM Budget (1080p reference)
-- Per frame at 1080p: 1920 x 1080 x 4 = 8.3MB
-- Per tier: ~530MB (64 full-res frames equivalent)
-- Total 4 tiers: ~2.1GB
-- At 720p: ~930MB total
-- Halved depths (32/128/512/2048): ~1.05GB at 1080p
+- Per frame at 1080p: 1920 × 1080 × 4 = 8.3MB
+- Tier 0 (288 frames, full res): ~2.4GB
+- Tier 1 (576 frames, half res): ~1.2GB
+- Tier 2 (1152 frames, quarter res): ~0.6GB
+- Tier 3 (2304 frames, eighth res): ~0.3GB
+- Total: ~4.5GB (tunable by adjusting depths)
