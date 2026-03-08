@@ -25,10 +25,10 @@ pub struct TierConfig {
 
 /// Default pyramid: 4 tiers, each ~same VRAM cost.
 pub const TIER_CONFIGS: [TierConfig; 4] = [
-    TierConfig { scale: 1.0,   depth: 64 },
-    TierConfig { scale: 0.5,   depth: 256 },
-    TierConfig { scale: 0.25,  depth: 1024 },
-    TierConfig { scale: 0.125, depth: 4096 },
+    TierConfig { scale: 1.0,   depth: 288 },
+    TierConfig { scale: 0.5,   depth: 576 },
+    TierConfig { scale: 0.25,  depth: 1152 },
+    TierConfig { scale: 0.125, depth: 2304 },
 ];
 
 pub const NUM_TIERS: usize = TIER_CONFIGS.len();

@@ -212,7 +212,16 @@ float imageCertainty(vec2 seedUV) {
 // Returns vec4(F1, F2, cellID.x, cellID.y)
 
 vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
-    vec2 p = uv * scale;
+    // Sample local image brightness at fragment position
+    vec2 fragNormUV = vec2(uv.x / aspect, uv.y);
+    float localBright = imageCertainty(fragNormUV);
+
+    // Modulate density: bright areas → tighter cells, dark areas → larger cells
+    // imageInfluence=0 → no modulation; imageInfluence=1 → 4:1 density ratio
+    float densityMult = mix(1.0, 0.5 + 1.5 * localBright, imageInfluence);
+    float modScale = scale * densityMult;
+
+    vec2 p = uv * modScale;
     vec2 cell = floor(p);
     vec2 localP = fract(p);
 
@@ -234,7 +243,7 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             vec2 seedBase = seedHash * 0.8 + 0.1;
 
             // Sample image certainty at seed position
-            vec2 seedWorldUV = (cellPos + seedBase) / scale;
+            vec2 seedWorldUV = (cellPos + seedBase) / modScale;
             vec2 seedNormUV = vec2(seedWorldUV.x / aspect, seedWorldUV.y);
             float rawCert = imageCertainty(seedNormUV);
             float cert = pow(rawCert, certContrast) * imageInfluence;
@@ -242,7 +251,7 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             // NC: accumulate certainty with Gaussian applicability
             vec2 point0 = neighbor + seedBase;
             float dist0 = length(point0 - localP);
-            float kr = max(kernelRadius * scale, 0.5);
+            float kr = max(kernelRadius * modScale, 0.5);
             float ncWeight = exp(-0.5 * (dist0 * dist0) / (kr * kr));
             certWeightedSum += cert * ncWeight;
             certWeightSum += ncWeight;
@@ -264,18 +273,15 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             vec2 drift = mix(circularDrift, chaoticDrift, driftChaos) * driftScale;
             vec2 point = neighbor + seedBase + drift;
 
-            // Certainty shrinks effective distance → tighter cells in important regions
-            // Exponential scaling: cert=1 → ~10x tighter cells
+            // Raw distance — density variation handled by grid scale modulation
             float dist = length(point - localP);
-            float densityBoost = exp(cert * 3.0);
-            float effectiveDist = dist / densityBoost;
 
-            if (effectiveDist < f1) {
+            if (dist < f1) {
                 f2 = f1;
-                f1 = effectiveDist;
+                f1 = dist;
                 nearestCell = cellPos;
-            } else if (effectiveDist < f2) {
-                f2 = effectiveDist;
+            } else if (dist < f2) {
+                f2 = dist;
             }
         }
     }
@@ -329,8 +335,11 @@ void main() {
         float glowFactor = (1.0 - smoothstep(0.0, max(glowRange, 0.001), edgeDist)) * edgeGlow;
         float totalEdge = clamp(max(edgeFactor, glowFactor), 0.0, 1.0);
 
-        // Edge color: brighter, less saturated
-        vec3 edgeRGB = hsv2rgb(vec3(hue, colorSat * 0.2, 1.0));
+        // Edge color: brightness tracks local image brightness
+        // When imageInfluence=0, edges are full brightness; otherwise they dim in dark areas
+        float normCert = imageInfluence > 0.001 ? ncLocalCertainty / imageInfluence : 1.0;
+        float edgeBright = mix(1.0, mix(0.15, 1.0, normCert), imageInfluence);
+        vec3 edgeRGB = hsv2rgb(vec3(hue, colorSat * 0.2, edgeBright));
         vec3 layerColor = mix(cellRGB, edgeRGB, totalEdge);
 
         // Contrast: stretch around midpoint

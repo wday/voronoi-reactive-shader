@@ -16,6 +16,7 @@ use gl::types::*;
 use ffgl_core::handler::simplified::SimpleFFGLInstance;
 use ffgl_core::{FFGLData, GLInput};
 
+use crate::midi::MidiOut;
 use crate::params::{self, DreamParams, NUM_PARAMS};
 use crate::pyramid::{Pyramid, NUM_TIERS};
 use crate::shader::DreamShaders;
@@ -24,6 +25,7 @@ pub struct DreamLooper {
     pyramid: Pyramid,
     params: DreamParams,
     shaders: Option<DreamShaders>,
+    midi: Option<MidiOut>,
     input_width: u32,
     input_height: u32,
     frame_count: u64,
@@ -39,6 +41,7 @@ impl SimpleFFGLInstance for DreamLooper {
             pyramid: Pyramid::new(),
             params: DreamParams::new(),
             shaders: None,
+            midi: None,
             input_width: 0,
             input_height: 0,
             frame_count: 0,
@@ -46,9 +49,12 @@ impl SimpleFFGLInstance for DreamLooper {
     }
 
     fn draw(&mut self, _data: &FFGLData, frame_data: GLInput) {
-        // Lazy-init shaders on first draw (need GL context)
+        // Lazy-init shaders and MIDI on first draw
         if self.shaders.is_none() {
             self.shaders = Some(DreamShaders::new());
+        }
+        if self.midi.is_none() {
+            self.midi = Some(MidiOut::new());
         }
 
         let input_tex = if !frame_data.textures.is_empty() {
@@ -85,9 +91,23 @@ impl SimpleFFGLInstance for DreamLooper {
             gl::GetIntegerv(gl::VIEWPORT, host_viewport.as_mut_ptr());
         }
 
-        // ── STEP 1: Ingest — render input into Tier 0 ──
+        // ── STEP 1: Ingest — render input + beat-synced feedback into Tier 0 ──
+        let (shift_x, shift_y) = self.params.shift();
+        let feedback = self.params.feedback();
+        let tier0 = self.pyramid.tiers[0].as_ref().unwrap();
+        let prev_array_tex = tier0.array_texture;
+        // Beat-synced delay: read N frames back, clamped to buffer depth
+        let delay = self.params.delay_frames().min(tier0.depth - 1).max(1);
+        let prev_layer = ((tier0.write_ptr + tier0.depth - delay) % tier0.depth) as f32;
         self.pyramid.bind_layer_for_write(0);
-        shaders.ingest(input_tex);
+        let rotation = self.params.rotation();
+        let scale = self.params.scale();
+        let hue_shift = self.params.hue_shift();
+        let sat_shift = self.params.sat_shift();
+        let swirl = self.params.swirl();
+        let mirror = if self.params.mirror() { 1.0 } else { 0.0 };
+        let fold = self.params.fold_threshold();
+        shaders.ingest(input_tex, prev_array_tex, prev_layer, shift_x, shift_y, feedback, rotation, scale, hue_shift, sat_shift, swirl, mirror, fold);
 
         let t_after_ingest = t_frame.elapsed();
 
@@ -118,6 +138,7 @@ impl SimpleFFGLInstance for DreamLooper {
         let active_tiers = self.params.active_tiers();
         let trail_opacity = self.params.trail_opacity();
         let trail_length = self.params.trail_length();
+        let weights = self.params.tier_weights();
 
         let cu = &shaders.composite_uniforms;
         shaders.composite.use_program();
@@ -141,6 +162,9 @@ impl SimpleFFGLInstance for DreamLooper {
             gl::Uniform1i(cu.active_tiers, active_tiers as i32);
             gl::Uniform1f(cu.trail_opacity, trail_opacity);
             gl::Uniform1f(cu.trail_length, trail_length);
+            for (i, &w) in weights.iter().enumerate() {
+                gl::Uniform1f(cu.weights[i], w);
+            }
         }
         shaders.quad.draw();
 
@@ -190,6 +214,18 @@ impl SimpleFFGLInstance for DreamLooper {
 
     fn set_param(&mut self, index: usize, value: f32) {
         self.params.set(index, value);
+        // Send MIDI CC on relevant param changes
+        if let Some(midi) = &mut self.midi {
+            match index {
+                params::PARAM_SUBDIVISION => {
+                    midi.send_subdivision(self.params.subdivision_beats());
+                }
+                params::PARAM_FEEDBACK => {
+                    midi.send_feedback(self.params.feedback());
+                }
+                _ => {}
+            }
+        }
     }
 
     fn plugin_info() -> ffgl_core::info::PluginInfo {
