@@ -40,30 +40,16 @@ jobs:
         shell: bash
         run: |
           cd ffgl-rs
-          for row in $(python3 -c "
-            import json
-            for p in json.load(open('../plugins.json'))['plugins']:
-              if p['type'] == 'isf':
-                print(f\"{p['name']}|{p['shader']}|{p['dll']}\")
-          "); do
-            IFS='|' read -r NAME SHADER DLL <<< "$row"
+          python3 ../scripts/list-plugins.py --type isf --format build | while IFS='|' read -r NAME SHADER DLL; do
             echo "==> Building ISF plugin: $NAME"
-            ISF_SOURCE="$(cd .. && pwd)/$SHADER" \
-            ISF_NAME="$NAME" \
-            cargo build --release -p ffgl-isf
+            ISF_SOURCE="$(cd .. && pwd)/$SHADER" ISF_NAME="$NAME" cargo build --release -p ffgl-isf
           done
 
       - name: Build Rust plugins
         shell: bash
         run: |
           cd plugins
-          for row in $(python3 -c "
-            import json
-            for p in json.load(open('../plugins.json'))['plugins']:
-              if p['type'] == 'rust':
-                print(f\"{p['name']}|{p['crate']}|{p['dll']}\")
-          "); do
-            IFS='|' read -r NAME CRATE DLL <<< "$row"
+          python3 ../scripts/list-plugins.py --type rust --format build | while IFS='|' read -r NAME CRATE DLL; do
             echo "==> Building Rust plugin: $NAME (crate: $CRATE)"
             cargo build --release -p "$CRATE"
           done
@@ -73,15 +59,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          for row in $(python3 -c "
-            import json
-            for p in json.load(open('plugins.json'))['plugins']:
-              if p['type'] == 'isf':
-                print(f\"{p['name']}|{p['dll']}|ffgl-rs/target/release/ffgl_isf.dll\")
-              elif p['type'] == 'rust':
-                print(f\"{p['name']}|{p['dll']}|plugins/target/release/{p['dll']}\")
-          "); do
-            IFS='|' read -r NAME DLL SRC <<< "$row"
+          python3 scripts/list-plugins.py --format package --platform windows | while IFS='|' read -r NAME BUNDLE DLL SRC; do
             if [ -f "$SRC" ]; then
               cp "$SRC" "dist/$DLL"
               echo "==> Packaged: dist/$DLL"
@@ -93,24 +71,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          for row in $(python3 -c "
-            import json
-            for p in json.load(open('plugins.json'))['plugins']:
-              if p['type'] == 'isf':
-                lib = 'ffgl-rs/target/release/libffgl_isf.dylib'
-              elif p['type'] == 'rust':
-                name = p['dll'].replace('.dll', '')
-                lib = f'plugins/target/release/lib{name}.dylib'
-              else:
-                continue
-              print(f\"{p['name']}|{p['dll']}|{lib}\")
-          "); do
-            IFS='|' read -r NAME DLL SRC <<< "$row"
-            BUNDLE_NAME="${DLL%.dll}"
-            BUNDLE_DIR="dist/${BUNDLE_NAME}.bundle"
+          python3 scripts/list-plugins.py --format package --platform macos | while IFS='|' read -r NAME BUNDLE DLL SRC; do
+            BUNDLE_DIR="dist/${BUNDLE}.bundle"
             mkdir -p "$BUNDLE_DIR/Contents/MacOS"
             if [ -f "$SRC" ]; then
-              cp "$SRC" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE_NAME"
+              cp "$SRC" "$BUNDLE_DIR/Contents/MacOS/$BUNDLE"
             fi
           done
           cd dist && for d in *.bundle; do zip -r "${d%.bundle}-macos.zip" "$d"; done
@@ -148,24 +113,16 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
 
           FILES=()
-          for f in release-windows/*.dll; do
-            [ -f "$f" ] && FILES+=("$f")
-          done
-          for f in release-macos/*-macos.zip; do
-            [ -f "$f" ] && FILES+=("$f")
-          done
+          for f in release-windows/*.dll; do [ -f "$f" ] && FILES+=("$f"); done
+          for f in release-macos/*-macos.zip; do [ -f "$f" ] && FILES+=("$f"); done
 
-          PLUGIN_LIST=$(python3 -c "
-          import json
-          for p in json.load(open('plugins.json'))['plugins']:
-              print(f\"- **{p['name']}** ({p['type']})\")
-          ")
+          PLUGIN_LIST=$(python3 scripts/list-plugins.py --format build | while IFS='|' read -r NAME REST; do
+            echo "- **$NAME**"
+          done)
 
           gh release create "$TAG" "${FILES[@]}" \
             --title "$TAG" \
-            --notes "$(cat <<EOF
-          ## Plugins
-
+            --notes "## Plugins
           $PLUGIN_LIST
 
           ## Installation
@@ -173,13 +130,9 @@ jobs:
           ### Windows (Resolume Avenue/Arena)
           1. Download the \`.dll\` file(s)
           2. Copy to: \`C:\\Users\\<you>\\Documents\\Resolume Avenue\\Extra Effects\\\`
-             (or \`Resolume Arena\\Extra Effects\\\`)
           3. Restart Resolume
 
           ### macOS (Resolume Avenue/Arena)
           1. Download and unzip the \`-macos.zip\` file(s)
           2. Copy the \`.bundle\` folder to: \`~/Library/Graphics/FreeFrame Plug-Ins/\`
-             (or \`~/Documents/Resolume Arena/Extra Effects/\`)
-          3. Restart Resolume
-          EOF
-          )"
+          3. Restart Resolume"
