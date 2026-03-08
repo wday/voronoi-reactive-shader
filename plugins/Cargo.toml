@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "video-looper",
     "video-looper-ltm-dream",
+    "delay-line-module",
 ]
 
 [workspace.dependencies]

@@ -17,6 +17,12 @@
       "type": "rust",
       "crate": "video-looper-ltm-dream",
       "dll": "video_looper_ltm_dream.dll"
+    },
+    {
+      "name": "delay_line_module",
+      "type": "rust",
+      "crate": "delay-line-module",
+      "dll": "delay_line_module.dll"
     }
   ]
 }
