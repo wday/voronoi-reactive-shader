@@ -11,3 +11,4 @@ ffgl-core = { workspace = true }
 gl = { workspace = true }
 gl_loader = { workspace = true }
 tracing = { workspace = true }
+midir = "0.10"

@@ -25,10 +25,10 @@ pub struct TierConfig {
 
 /// Default pyramid: 4 tiers, each ~same VRAM cost.
 pub const TIER_CONFIGS: [TierConfig; 4] = [
-    TierConfig { scale: 1.0,   depth: 64 },
-    TierConfig { scale: 0.5,   depth: 256 },
-    TierConfig { scale: 0.25,  depth: 1024 },
-    TierConfig { scale: 0.125, depth: 4096 },
+    TierConfig { scale: 1.0,   depth: 288 },
+    TierConfig { scale: 0.5,   depth: 576 },
+    TierConfig { scale: 0.25,  depth: 1152 },
+    TierConfig { scale: 0.125, depth: 2304 },
 ];
 
 pub const NUM_TIERS: usize = TIER_CONFIGS.len();
@@ -132,8 +132,12 @@ impl Pyramid {
                 );
                 gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
                 gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                // CLAMP_TO_BORDER returns black for out-of-bounds UVs instead of
+                // repeating the edge row/column (CLAMP_TO_EDGE), which caused
+                // visible lines when rotation/swirl maps UVs outside [0,1].
+                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_BORDER as i32);
+                gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_BORDER as i32);
+                // Border color defaults to (0,0,0,0) — black/transparent
                 gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
 
                 // FBO for rendering into individual layers

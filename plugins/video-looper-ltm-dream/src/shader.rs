@@ -23,14 +23,91 @@ void main() {
 }
 ";
 
-// ── Passthrough: copy a 2D texture into an array layer ──
-static FS_PASSTHROUGH: &str = "
+// ── Ingest: write live input + shifted previous frame (recursive feedback) ──
+// Each stored frame = live + shifted(previous) * feedback, so echoes compound.
+static FS_INGEST: &str = "
 #version 150
 in vec2 v_uv;
 out vec4 out_color;
 uniform sampler2D u_input;
+uniform sampler2DArray u_prev_tier;
+uniform float u_prev_layer;
+uniform vec2 u_shift;
+uniform float u_feedback;
+uniform float u_rotation;
+uniform float u_scale;
+uniform float u_hue_shift;
+uniform float u_sat_shift;
+uniform float u_swirl;
+uniform float u_mirror;
+uniform float u_fold;
+
+// RGB ↔ HSV conversion
+vec3 rgb2hsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+// Triangle wave fold: values above threshold mirror back instead of clamping
+vec3 fold(vec3 v, float t) {
+    float period = t * 2.0;
+    return t - abs(mod(v, vec3(period)) - vec3(t));
+}
+
 void main() {
-    out_color = texture(u_input, v_uv);
+    vec4 live = texture(u_input, v_uv);
+    // Scale, swirl, rotate around center, then shift
+    vec2 centered = v_uv - 0.5;
+    centered *= u_scale;
+    // Swirl: angular displacement proportional to distance from center
+    if (u_swirl != 0.0) {
+        float r = length(centered);
+        float angle = u_swirl * r;
+        float cs = cos(angle);
+        float ss = sin(angle);
+        centered = vec2(centered.x * cs - centered.y * ss,
+                        centered.x * ss + centered.y * cs);
+    }
+    float c = cos(u_rotation);
+    float s = sin(u_rotation);
+    vec2 rotated = vec2(centered.x * c - centered.y * s,
+                        centered.x * s + centered.y * c);
+    vec2 transformed_uv = rotated + 0.5 + u_shift;
+    // Mirror or clip at edges
+    float inBounds = 1.0;
+    if (u_mirror > 0.5) {
+        // Reflect: fold UV back into 0..1 range (kaleidoscope)
+        transformed_uv = 1.0 - abs(mod(transformed_uv, 2.0) - 1.0);
+    } else {
+        // Soft clip: fade to black over a few pixels at the frame boundary
+        // to prevent hard edges from compounding through feedback iterations
+        float edge = 0.005;
+        inBounds = smoothstep(0.0, edge, transformed_uv.x) * smoothstep(1.0, 1.0 - edge, transformed_uv.x)
+                 * smoothstep(0.0, edge, transformed_uv.y) * smoothstep(1.0, 1.0 - edge, transformed_uv.y);
+    }
+    vec4 prev = texture(u_prev_tier, vec3(transformed_uv, u_prev_layer)) * inBounds;
+    // Hue + saturation shift — accumulates through echoes
+    vec3 prev_rgb = prev.rgb * u_feedback;
+    if ((u_hue_shift != 0.0 || u_sat_shift != 0.0) && dot(prev_rgb, prev_rgb) > 0.001) {
+        vec3 hsv = rgb2hsv(prev_rgb);
+        hsv.x = fract(hsv.x + u_hue_shift);
+        hsv.y = clamp(hsv.y + u_sat_shift, 0.0, 1.0);
+        prev_rgb = hsv2rgb(hsv);
+    }
+    // Screen blend: brightens without the per-channel hard edges that max() creates
+    vec3 color = live.rgb + prev_rgb - live.rgb * prev_rgb;
+    // Fold luminance above threshold — inverts instead of clamping
+    color = fold(color, u_fold);
+    out_color = vec4(clamp(color, 0.0, 1.0), 1.0);
 }
 ";
 
@@ -47,14 +124,13 @@ void main() {
 }
 ";
 
-// ── Composite: sample from all tiers, blend weighted ──
+// ── Composite: one tap per tier at musically-timed offsets ──
 //
-// Each tier samples multiple "taps" spread across its temporal depth.
-// Tier 0 (64 frames, full res): recent sharp echoes
-// Tier 3 (4096 frames, 1/8 res): deep blurry memory
+// Each tier provides one echo at a doubling delay:
+//   T0: 1× subdivision (sharp)   T1: 2× (soft)
+//   T2: 4× (dreamy)              T3: 8× (deep memory)
 //
-// The trail_length param controls how far back to reach (0 = shallow, 1 = full depth).
-// trail_opacity controls the blend strength of the trail vs live input.
+// output = dry * live + wet * (tap1*level1 + tap2*level2 + ...)
 static FS_COMPOSITE: &str = "
 #version 150
 in vec2 v_uv;
@@ -65,9 +141,6 @@ uniform sampler2DArray u_tier0;
 uniform sampler2DArray u_tier1;
 uniform sampler2DArray u_tier2;
 uniform sampler2DArray u_tier3;
-uniform int u_active_tiers;
-uniform float u_trail_opacity;
-uniform float u_trail_length;       // 0..1: how deep into history to reach
 
 uniform float u_write_ptr0;
 uniform float u_write_ptr1;
@@ -78,68 +151,30 @@ uniform float u_depth1;
 uniform float u_depth2;
 uniform float u_depth3;
 
-// Sample a frame from a tier at a given temporal offset from the write head
-vec4 sampleTier(sampler2DArray tier, float writePtr, float depth, float offset) {
+uniform float u_delay;    // base delay in frames (1× subdivision)
+uniform float u_dry;
+uniform float u_wet;
+uniform float u_tap0;     // T0 level (1× delay, sharp)
+uniform float u_tap1;     // T1 level (2× delay, soft)
+uniform float u_tap2;     // T2 level (4× delay, dreamy)
+uniform float u_tap3;     // T3 level (8× delay, deep)
+
+vec4 sampleTap(sampler2DArray tier, float writePtr, float depth, float offset) {
     float index = mod(writePtr - offset, depth);
     return texture(tier, vec3(v_uv, index));
-}
-
-// Sample multiple taps from a tier, spread across its depth.
-// Returns weighted average with exponential falloff into the past.
-vec4 sampleTierMulti(sampler2DArray tier, float writePtr, float depth, float reach) {
-    // reach = how far into history (fraction of depth)
-    float maxOffset = max(depth * reach, 2.0);
-    vec4 accum = vec4(0.0);
-    float total_w = 0.0;
-
-    // 4 taps per tier, exponentially spaced
-    // tap 0: ~6% into history (recent echo)
-    // tap 3: ~100% of reach (deepest memory)
-    for (int t = 0; t < 4; t++) {
-        float frac = float(t + 1) / 4.0;       // 0.25, 0.5, 0.75, 1.0
-        float offset = frac * maxOffset;
-        float w = 1.0 / (1.0 + float(t));      // 1.0, 0.5, 0.33, 0.25 — recency bias
-        accum += w * sampleTier(tier, writePtr, depth, offset);
-        total_w += w;
-    }
-    return accum / total_w;
 }
 
 void main() {
     vec4 live = texture(u_input, v_uv);
     vec4 trail = vec4(0.0);
-    float total_weight = 0.0;
 
-    // Per-tier weight: sharper (recent) tiers dominate, blurrier (deep) tiers are subtle
-    // But all contribute to create the layered persistence effect
-    float reach = max(u_trail_length, 0.05);    // minimum 5% reach so there's always SOME trail
+    // One tap per tier at doubling delay offsets
+    if (u_tap0 > 0.001) trail += u_tap0 * sampleTap(u_tier0, u_write_ptr0, u_depth0, u_delay);
+    if (u_tap1 > 0.001) trail += u_tap1 * sampleTap(u_tier1, u_write_ptr1, u_depth1, 2.0 * u_delay);
+    if (u_tap2 > 0.001) trail += u_tap2 * sampleTap(u_tier2, u_write_ptr2, u_depth2, 4.0 * u_delay);
+    if (u_tap3 > 0.001) trail += u_tap3 * sampleTap(u_tier3, u_write_ptr3, u_depth3, 8.0 * u_delay);
 
-    if (u_active_tiers >= 1) {
-        float w = 0.6;
-        trail += w * sampleTierMulti(u_tier0, u_write_ptr0, u_depth0, reach);
-        total_weight += w;
-    }
-    if (u_active_tiers >= 2) {
-        float w = 0.3;
-        trail += w * sampleTierMulti(u_tier1, u_write_ptr1, u_depth1, reach);
-        total_weight += w;
-    }
-    if (u_active_tiers >= 3) {
-        float w = 0.15;
-        trail += w * sampleTierMulti(u_tier2, u_write_ptr2, u_depth2, reach);
-        total_weight += w;
-    }
-    if (u_active_tiers >= 4) {
-        float w = 0.08;
-        trail += w * sampleTierMulti(u_tier3, u_write_ptr3, u_depth3, reach);
-        total_weight += w;
-    }
-
-    if (total_weight > 0.0) {
-        trail /= total_weight;
-    }
-
-    out_color = mix(live, trail, u_trail_opacity);
+    out_color = vec4(u_dry * live.rgb + u_wet * trail.rgb, 1.0);
 }
 ";
 
@@ -275,18 +310,35 @@ pub struct CompositeUniforms {
     pub tiers: [GLint; 4],
     pub write_ptrs: [GLint; 4],
     pub depths: [GLint; 4],
-    pub active_tiers: GLint,
-    pub trail_opacity: GLint,
-    pub trail_length: GLint,
+    pub delay: GLint,
+    pub dry: GLint,
+    pub wet: GLint,
+    pub taps: [GLint; 4],
+}
+
+/// Cached uniform locations for the ingest (feedback) shader.
+pub struct IngestUniforms {
+    pub input: GLint,
+    pub prev_tier: GLint,
+    pub prev_layer: GLint,
+    pub shift: GLint,
+    pub feedback: GLint,
+    pub rotation: GLint,
+    pub scale: GLint,
+    pub hue_shift: GLint,
+    pub sat_shift: GLint,
+    pub swirl: GLint,
+    pub mirror: GLint,
+    pub fold: GLint,
 }
 
 /// All three shader programs used by the dream looper.
 pub struct DreamShaders {
-    pub passthrough: ShaderProgram,
+    pub ingest: ShaderProgram,
     pub downsample: ShaderProgram,
     pub composite: ShaderProgram,
+    pub ingest_uniforms: IngestUniforms,
     pub composite_uniforms: CompositeUniforms,
-    loc_pt_input: GLint,
     loc_ds_source_tier: GLint,
     loc_ds_source_layer: GLint,
     pub quad: QuadGeometry,
@@ -294,17 +346,30 @@ pub struct DreamShaders {
 
 impl DreamShaders {
     pub fn new() -> Self {
-        let passthrough = ShaderProgram::new(FS_PASSTHROUGH);
+        let ingest = ShaderProgram::new(FS_INGEST);
         let downsample = ShaderProgram::new(FS_DOWNSAMPLE);
         let composite = ShaderProgram::new(FS_COMPOSITE);
 
         let quad = QuadGeometry::new();
         // All three shaders share the same vertex shader, so attribute
         // locations are identical. Set up once with any program.
-        quad.setup_attrs(passthrough.program);
+        quad.setup_attrs(ingest.program);
 
         // Cache all uniform locations at init time
-        let loc_pt_input = passthrough.uniform_loc("u_input");
+        let ingest_uniforms = IngestUniforms {
+            input: ingest.uniform_loc("u_input"),
+            prev_tier: ingest.uniform_loc("u_prev_tier"),
+            prev_layer: ingest.uniform_loc("u_prev_layer"),
+            shift: ingest.uniform_loc("u_shift"),
+            feedback: ingest.uniform_loc("u_feedback"),
+            rotation: ingest.uniform_loc("u_rotation"),
+            scale: ingest.uniform_loc("u_scale"),
+            hue_shift: ingest.uniform_loc("u_hue_shift"),
+            sat_shift: ingest.uniform_loc("u_sat_shift"),
+            swirl: ingest.uniform_loc("u_swirl"),
+            mirror: ingest.uniform_loc("u_mirror"),
+            fold: ingest.uniform_loc("u_fold"),
+        };
         let loc_ds_source_tier = downsample.uniform_loc("u_source_tier");
         let loc_ds_source_layer = downsample.uniform_loc("u_source_layer");
 
@@ -328,31 +393,73 @@ impl DreamShaders {
                 composite.uniform_loc("u_depth2"),
                 composite.uniform_loc("u_depth3"),
             ],
-            active_tiers: composite.uniform_loc("u_active_tiers"),
-            trail_opacity: composite.uniform_loc("u_trail_opacity"),
-            trail_length: composite.uniform_loc("u_trail_length"),
+            delay: composite.uniform_loc("u_delay"),
+            dry: composite.uniform_loc("u_dry"),
+            wet: composite.uniform_loc("u_wet"),
+            taps: [
+                composite.uniform_loc("u_tap0"),
+                composite.uniform_loc("u_tap1"),
+                composite.uniform_loc("u_tap2"),
+                composite.uniform_loc("u_tap3"),
+            ],
         };
 
         Self {
-            passthrough, downsample, composite, composite_uniforms,
-            loc_pt_input, loc_ds_source_tier, loc_ds_source_layer,
+            ingest, downsample, composite,
+            ingest_uniforms, composite_uniforms,
+            loc_ds_source_tier, loc_ds_source_layer,
             quad,
         }
     }
 
-    /// Copy a 2D input texture into the current write layer of a tier.
-    pub fn ingest(&self, input_tex: GLuint) {
-        self.passthrough.use_program();
+    /// Ingest with recursive feedback: live + shifted(previous) * decay.
+    /// prev_array_tex is tier 0's texture array, prev_layer is the previous write slot.
+    pub fn ingest(
+        &self,
+        input_tex: GLuint,
+        prev_array_tex: GLuint,
+        prev_layer: f32,
+        shift_x: f32,
+        shift_y: f32,
+        feedback: f32,
+        rotation: f32,
+        scale: f32,
+        hue_shift: f32,
+        sat_shift: f32,
+        swirl: f32,
+        mirror: f32,
+        fold: f32,
+    ) {
+        let iu = &self.ingest_uniforms;
+        self.ingest.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
-            gl::Uniform1i(self.loc_pt_input, 0);
+            gl::Uniform1i(iu.input, 0);
+
+            gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, prev_array_tex);
+            gl::Uniform1i(iu.prev_tier, 1);
+            gl::Uniform1f(iu.prev_layer, prev_layer);
+
+            gl::Uniform2f(iu.shift, shift_x, shift_y);
+            gl::Uniform1f(iu.feedback, feedback);
+            gl::Uniform1f(iu.rotation, rotation);
+            gl::Uniform1f(iu.scale, scale);
+            gl::Uniform1f(iu.hue_shift, hue_shift);
+            gl::Uniform1f(iu.sat_shift, sat_shift);
+            gl::Uniform1f(iu.swirl, swirl);
+            gl::Uniform1f(iu.mirror, mirror);
+            gl::Uniform1f(iu.fold, fold);
         }
         self.quad.draw();
         unsafe {
+            gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+            gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
-        self.passthrough.unuse();
+        self.ingest.unuse();
     }
 
     /// Downsample from source tier's newest layer into the current FBO target.

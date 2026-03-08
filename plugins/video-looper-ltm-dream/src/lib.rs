@@ -1,4 +1,5 @@
 mod dream;
+mod midi;
 mod params;
 mod pyramid;
 mod shader;
