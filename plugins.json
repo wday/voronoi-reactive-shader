@@ -24,6 +24,12 @@
       "type": "rust",
       "crate": "delay-line-module",
       "dll": "delay_line_module.dll"
+    },
+    {
+      "name": "mirror_transform",
+      "type": "rust",
+      "crate": "mirror-transform",
+      "dll": "mirror_transform.dll"
     }
   ]
 }
