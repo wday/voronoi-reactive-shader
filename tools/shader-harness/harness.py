@@ -11,12 +11,12 @@ Usage:
     python harness.py --shaders logistic.frag.glsl channel_displace.frag.glsl
 
 Controls:
-    1-9     Select active shader's uniform group
-    Up/Down Adjust selected uniform value
-    Space   Toggle feedback loop
-    S       Save current frame as PNG
-    R       Reset feedback buffer
-    Q/Esc   Quit
+    Tab/Left/Right  Select active shader's uniform group
+    Up/Down         Adjust selected uniform value
+    Space           Toggle feedback loop
+    S               Save current frame as PNG
+    R               Reset feedback buffer
+    Q/Esc           Quit
 """
 
 import argparse
