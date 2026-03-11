@@ -52,7 +52,8 @@ def main():
     for p in plugins:
         if fmt == "build":
             if p["type"] == "isf":
-                print(f"{p['name']}|{p['shader']}|{p['dll']}")
+                display = p.get("display_name", p["name"])
+                print(f"{display}|{p['shader']}|{p['dll']}")
             elif p["type"] == "rust":
                 print(f"{p['name']}|{p['crate']}|{p['dll']}")
 

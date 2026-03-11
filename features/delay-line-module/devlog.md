@@ -45,6 +45,36 @@ Layer 3 (top): VideoRouter→L1 (dry)
 Video Router "Input Opacity" defaults to off, so 0% opacity Layer 1 is still routable.
 Routing from below = zero latency.
 
+## 2026-03-08: v2 — Tap mode + sync mode
+
+### Tap mode
+
+Added third mode alongside Send/Receive. Tap outputs the delayed frame directly from the
+buffer — no input mixing, no feedback. Read-only access to the shared buffer.
+
+**Use case**: Multi-tap echo clouds. Multiple Tap instances on separate Resolume layers,
+each at different delay times, with independent spatial transforms. One Receive handles
+feedback; Tap instances are purely additive observers.
+
+**Resolume setup**: Black source clip on each Tap layer. Tap ignores input, outputs delayed
+buffer frame. Layer blend mode composites into output.
+
+**Future direction**: Refactor into standalone Source plugin (`delay-line-tap`) using
+cross-DLL shared memory IPC (Windows named file mapping). Draw logic stays identical —
+only buffer lookup changes from `registry::read_channel()` to shared memory read.
+
+### Sync mode
+
+Replaced fixed subdivision-only delay with three selectable time modes:
+- **Subdivision**: existing BPM-derived (unchanged)
+- **Ms**: 0–5000ms, free-running, derived from ms + FPS estimate
+- **Frames**: 1–899, direct frame count, no BPM/FPS dependency
+
+All three delay params (subdivision, ms, frames) always visible in FFGL — no conditional
+visibility in the spec. Inactive ones are simply ignored.
+
+Param count: 4 → 7. Param order: Mode, Channel, Sync Mode, Subdivision, Delay Ms, Delay Frames, Feedback.
+
 ### VRAM usage
 
 RTX 5070 Ti Laptop, 12GB. One active channel at 1080p (900 frames × 8MB) = ~7.2GB.

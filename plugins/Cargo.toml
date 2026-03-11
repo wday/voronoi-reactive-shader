@@ -4,6 +4,7 @@ members = [
     "video-looper",
     "video-looper-ltm-dream",
     "delay-line-module",
+    "mirror-transform",
 ]
 
 [workspace.dependencies]
