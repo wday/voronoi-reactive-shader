@@ -1,7 +1,7 @@
 [project]
 name = "shader-harness"
 version = "0.1.0"
-description = "Add your description here"
+description = "A small ModernGL-based harness for developing and testing GPU shaders using Python."
 requires-python = ">=3.12"
 dependencies = [
     "moderngl>=5.12.0",
