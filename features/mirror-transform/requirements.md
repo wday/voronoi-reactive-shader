@@ -1,6 +1,6 @@
 # Mirror Transform — Requirements
 
-## Status: v1 in progress
+## Status: v1 complete
 
 ## Concept
 
