@@ -7,6 +7,8 @@ uniform float u_scale;
 uniform float u_rotation;
 uniform float u_swirl;
 uniform float u_mirror;
+uniform float u_translate_x;
+uniform float u_translate_y;
 
 void main() {
     // Scale, swirl, rotate around center
@@ -29,7 +31,7 @@ void main() {
     vec2 rotated = vec2(centered.x * c - centered.y * s,
                         centered.x * s + centered.y * c);
 
-    vec2 transformed_uv = rotated + 0.5;
+    vec2 transformed_uv = rotated + 0.5 + vec2(u_translate_x, u_translate_y);
 
     // Mirror or soft-clip at edges
     float inBounds = 1.0;

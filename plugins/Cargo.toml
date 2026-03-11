@@ -5,6 +5,8 @@ members = [
     "video-looper-ltm-dream",
     "delay-line-module",
     "mirror-transform",
+    "logistic-feedback",
+    "channel-displace",
 ]
 
 [workspace.dependencies]

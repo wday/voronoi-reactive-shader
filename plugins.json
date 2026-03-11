@@ -30,6 +30,18 @@
       "type": "rust",
       "crate": "mirror-transform",
       "dll": "mirror_transform.dll"
+    },
+    {
+      "name": "logistic_feedback",
+      "type": "rust",
+      "crate": "logistic-feedback",
+      "dll": "logistic_feedback.dll"
+    },
+    {
+      "name": "channel_displace",
+      "type": "rust",
+      "crate": "channel-displace",
+      "dll": "channel_displace.dll"
     }
   ]
 }

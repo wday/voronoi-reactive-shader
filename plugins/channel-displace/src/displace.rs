@@ -3,29 +3,29 @@ use gl::types::*;
 use ffgl_core::handler::simplified::SimpleFFGLInstance;
 use ffgl_core::{FFGLData, GLInput};
 
-use crate::params::{self, TransformParams, NUM_PARAMS};
-use crate::shader::TransformShader;
+use crate::params::{self, DisplaceParams, NUM_PARAMS};
+use crate::shader::DisplaceShader;
 
-pub struct MirrorTransform {
-    params: TransformParams,
-    shader: Option<TransformShader>,
+pub struct ChannelDisplace {
+    params: DisplaceParams,
+    shader: Option<DisplaceShader>,
 }
 
-impl SimpleFFGLInstance for MirrorTransform {
+impl SimpleFFGLInstance for ChannelDisplace {
     fn new(inst_data: &FFGLData) -> Self {
         gl_loader::init_gl();
         gl::load_with(|s| gl_loader::get_proc_address(s).cast());
         let _ = inst_data;
 
         Self {
-            params: TransformParams::new(),
+            params: DisplaceParams::new(),
             shader: None,
         }
     }
 
     fn draw(&mut self, _data: &FFGLData, frame_data: GLInput) {
         if self.shader.is_none() {
-            self.shader = Some(TransformShader::new());
+            self.shader = Some(DisplaceShader::new());
         }
 
         let input_tex = if !frame_data.textures.is_empty() {
@@ -53,12 +53,10 @@ impl SimpleFFGLInstance for MirrorTransform {
 
         self.shader.as_ref().unwrap().render(
             input_tex,
-            self.params.scale(),
-            self.params.rotation(),
-            self.params.swirl(),
-            self.params.mirror(),
-            self.params.translate_x(),
-            self.params.translate_y(),
+            self.params.amount(),
+            self.params.pattern(),
+            self.params.angle(),
+            self.params.dry_wet(),
         );
 
         // Restore host GL state
@@ -87,11 +85,11 @@ impl SimpleFFGLInstance for MirrorTransform {
 
     fn plugin_info() -> ffgl_core::info::PluginInfo {
         ffgl_core::info::PluginInfo {
-            unique_id: *b"MrTx",
-            name: *b"Mirror Transform",
+            unique_id: *b"ChDp",
+            name: *b"Channel Displace",
             ty: ffgl_core::info::PluginType::Effect,
-            about: "Scale/rotate/swirl with kaleidoscope mirror edges".to_string(),
-            description: "Spatial transform with mirror fold or soft-clip edges".to_string(),
+            about: "Cross-channel UV displacement for strange attractor dynamics".to_string(),
+            description: "Couples RGB channels via spatial displacement".to_string(),
         }
     }
 }

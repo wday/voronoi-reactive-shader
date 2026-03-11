@@ -3,11 +3,13 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 4;
+pub const NUM_PARAMS: usize = 6;
 pub const PARAM_SCALE: usize = 0;
 pub const PARAM_ROTATION: usize = 1;
 pub const PARAM_SWIRL: usize = 2;
 pub const PARAM_MIRROR: usize = 3;
+pub const PARAM_TRANSLATE_X: usize = 4;
+pub const PARAM_TRANSLATE_Y: usize = 5;
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [
@@ -43,6 +45,20 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ]),
             ..Default::default()
         },
+        // 4: Translate X (-1.0 to +1.0)
+        SimpleParamInfo {
+            name: CString::new("Translate X").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(0.5), // 0
+            ..Default::default()
+        },
+        // 5: Translate Y (-1.0 to +1.0)
+        SimpleParamInfo {
+            name: CString::new("Translate Y").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(0.5), // 0
+            ..Default::default()
+        },
     ]
 });
 
@@ -57,7 +73,7 @@ pub struct TransformParams {
 impl TransformParams {
     pub fn new() -> Self {
         Self {
-            values: [0.5, 0.5, 0.5, 0.0],
+            values: [0.5, 0.5, 0.5, 0.0, 0.5, 0.5],
         }
     }
 
@@ -89,5 +105,15 @@ impl TransformParams {
     /// Mirror: true if on
     pub fn mirror(&self) -> bool {
         self.values[PARAM_MIRROR] > 0.5
+    }
+
+    /// Translate X: 0.0 → -1.0, 0.5 → 0, 1.0 → +1.0
+    pub fn translate_x(&self) -> f32 {
+        self.values[PARAM_TRANSLATE_X] * 2.0 - 1.0
+    }
+
+    /// Translate Y: 0.0 → -1.0, 0.5 → 0, 1.0 → +1.0
+    pub fn translate_y(&self) -> f32 {
+        self.values[PARAM_TRANSLATE_Y] * 2.0 - 1.0
     }
 }
