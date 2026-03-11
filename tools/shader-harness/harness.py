@@ -305,13 +305,16 @@ class ShaderChain:
         self.blit_prog["u_input"].value = 0
         self.blit_vao.render()
 
-    def save_frame(self, path):
-        """Save the current output as a PNG."""
+    def get_frame(self):
+        """Read the current output as a PIL Image."""
         final_fbo = self.passes[-1].fbo if self.passes else self.feedback_fbo
         data = final_fbo.read(components=4)
         img = Image.frombytes("RGBA", (self.width, self.height), data)
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        img.save(path)
+        return img.transpose(Image.FLIP_TOP_BOTTOM)
+
+    def save_frame(self, path):
+        """Save the current output as a PNG."""
+        self.get_frame().save(path)
         print(f"Saved: {path}")
 
     def reset_feedback(self):

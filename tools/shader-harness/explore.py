@@ -23,16 +23,16 @@ Usage:
 
 import argparse
 import json
-import os
 import random
-import struct
 import sys
 import time
 from pathlib import Path
 
 import moderngl
 import pygame
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+
+from harness import ShaderChain, find_project_root
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
@@ -155,78 +155,33 @@ SOURCE_GENERATORS = {
     "line": make_single_line,
 }
 
-# ── Shader harness (minimal inline version) ─────────────────────────────────
-
-VERT = """
-#version 330
-in vec2 position;
-in vec2 texcoord;
-out vec2 v_uv;
-void main() { v_uv = texcoord; gl_Position = vec4(position, 0, 1); }
-"""
-
-MIX_FRAG = """
-#version 330
-in vec2 v_uv;
-out vec4 out_color;
-uniform sampler2D u_feedback;
-uniform sampler2D u_source;
-uniform float u_source_mix;
-void main() {
-    out_color = mix(texture(u_feedback, v_uv), texture(u_source, v_uv), u_source_mix);
-}
-"""
+def find_transform_shader():
+    """Locate the mirror-transform fragment shader."""
+    root = find_project_root()
+    return str(root / "plugins/mirror-transform/src/shaders/transform.frag.glsl")
 
 
-def load_transform_shader():
-    """Load the transform fragment shader."""
-    root = Path(__file__).resolve().parent.parent.parent
-    shader_path = root / "plugins/mirror-transform/src/shaders/transform.frag.glsl"
-    src = shader_path.read_text().replace("#version 150", "#version 330")
-    return src
+def create_chain(ctx, w, h):
+    """Create a ShaderChain configured for the transform shader."""
+    shader_path = find_transform_shader()
+    return ShaderChain(ctx, [shader_path], w, h)
 
 
-def render_one(ctx, transform_prog, mix_prog, vao, mix_vao,
-               source_tex, fbo_a, fbo_b, tex_a, tex_b, feedback_fbo, feedback_tex,
-               params, iterations, source_mix, width, height):
-    """Render a single parameter set and return the final image."""
+def render_one(chain, source_img, params, iterations, source_mix):
+    """Render a single parameter set using the chain and return a PIL Image."""
+    chain.reset_feedback()
+    chain.source_mix = source_mix
+    chain.source_tex.write(source_img.tobytes())
 
-    # Clear feedback
-    feedback_fbo.use()
-    ctx.clear(0, 0, 0, 1)
+    # Set transform uniforms
+    sp = chain.passes[0]
+    for k, v in params.items():
+        sp.set_uniform(k, v)
 
-    for i in range(iterations):
-        # Mix source into feedback (or use source on frame 0)
-        if i > 0:
-            fbo_a.use()
-            ctx.clear(0, 0, 0, 1)
-            feedback_tex.use(location=0)
-            source_tex.use(location=1)
-            mix_prog["u_feedback"].value = 0
-            mix_prog["u_source"].value = 1
-            mix_prog["u_source_mix"].value = source_mix
-            mix_vao.render()
-            input_tex = tex_a
-        else:
-            input_tex = source_tex
+    for _ in range(iterations):
+        chain.render_frame()
 
-        # Run transform
-        fbo_b.use()
-        ctx.clear(0, 0, 0, 1)
-        input_tex.use(location=0)
-        transform_prog["u_input"].value = 0
-        for k, v in params.items():
-            if k in transform_prog:
-                transform_prog[k].value = v
-        vao.render()
-
-        # Copy to feedback
-        ctx.copy_framebuffer(feedback_fbo, fbo_b)
-
-    # Read result
-    data = fbo_b.read(components=4)
-    img = Image.frombytes("RGBA", (width, height), data)
-    return img.transpose(Image.FLIP_TOP_BOTTOM)
+    return chain.get_frame()
 
 
 # ── Parameter sampling ──────────────────────────────────────────────────────
@@ -357,7 +312,7 @@ def save_generations_index(output_dir, index):
 # ── High-res render ──────────────────────────────────────────────────────────
 
 def render_keepers(args):
-    """Re-render keepers at high resolution using offscreen FBOs."""
+    """Re-render keepers at high resolution."""
     preset = args.render
     w, h = RENDER_PRESETS[preset]
 
@@ -379,52 +334,23 @@ def render_keepers(args):
     print(f"Rendering {len(filenames)} keepers at {w}x{h} ({preset})")
     print(f"Output: {render_dir}/\n")
 
-    # Init pygame with small window, render offscreen
+    # Init pygame with small window, render offscreen via chain
     pygame.init()
     pygame.display.set_mode((320, 240), pygame.OPENGL | pygame.DOUBLEBUF)
-    pygame.display.set_caption(f"Render {preset}")
     ctx = moderngl.create_context()
-
-    # Compile shaders
-    transform_frag = load_transform_shader()
-    transform_prog = ctx.program(vertex_shader=VERT, fragment_shader=transform_frag)
-    mix_prog = ctx.program(vertex_shader=VERT, fragment_shader=MIX_FRAG)
-
-    # Shared quad
-    QUAD = [-1,-1,0,0, 1,-1,1,0, -1,1,0,1, 1,-1,1,0, 1,1,1,1, -1,1,0,1]
-    vbo = ctx.buffer(struct.pack(f"{len(QUAD)}f", *QUAD))
-    vao = ctx.vertex_array(transform_prog, [(vbo, "2f 2f", "position", "texcoord")])
-    mix_vao = ctx.vertex_array(mix_prog, [(vbo, "2f 2f", "position", "texcoord")])
-
-    # FBOs at render resolution
-    tex_a = ctx.texture((w, h), 4); tex_a.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    fbo_a = ctx.framebuffer([tex_a])
-    tex_b = ctx.texture((w, h), 4); tex_b.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    fbo_b = ctx.framebuffer([tex_b])
-    feedback_tex = ctx.texture((w, h), 4); feedback_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    feedback_fbo = ctx.framebuffer([feedback_tex])
+    chain = create_chain(ctx, w, h)
 
     # Pre-generate source images at render resolution
-    source_textures = {}
-    for name, gen_fn in SOURCE_GENERATORS.items():
-        img = gen_fn(w, h)
-        tex = ctx.texture((w, h), 4, img.tobytes())
-        tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-        source_textures[name] = tex
+    source_images = {name: gen_fn(w, h) for name, gen_fn in SOURCE_GENERATORS.items()}
 
     for i, fname in enumerate(filenames):
         parsed = parse_filename(fname)
         if not parsed:
             continue
         params, iterations, source_mix, source_name = parsed
-        source_tex = source_textures[source_name]
 
         t0 = time.time()
-        result = render_one(
-            ctx, transform_prog, mix_prog, vao, mix_vao,
-            source_tex, fbo_a, fbo_b, tex_a, tex_b, feedback_fbo, feedback_tex,
-            params, iterations, source_mix, w, h
-        )
+        result = render_one(chain, source_images[source_name], params, iterations, source_mix)
         dt = time.time() - t0
 
         out_name = Path(fname).stem + f"_{preset}.png"
@@ -512,35 +438,11 @@ def main():
     # Init pygame + GL
     pygame.init()
     pygame.display.set_mode((w, h), pygame.OPENGL | pygame.DOUBLEBUF)
-    pygame.display.set_caption("Explorer")
     ctx = moderngl.create_context()
-
-    # Compile shaders
-    transform_frag = load_transform_shader()
-    transform_prog = ctx.program(vertex_shader=VERT, fragment_shader=transform_frag)
-    mix_prog = ctx.program(vertex_shader=VERT, fragment_shader=MIX_FRAG)
-
-    # Shared quad
-    QUAD = [-1,-1,0,0, 1,-1,1,0, -1,1,0,1, 1,-1,1,0, 1,1,1,1, -1,1,0,1]
-    vbo = ctx.buffer(struct.pack(f"{len(QUAD)}f", *QUAD))
-    vao = ctx.vertex_array(transform_prog, [(vbo, "2f 2f", "position", "texcoord")])
-    mix_vao = ctx.vertex_array(mix_prog, [(vbo, "2f 2f", "position", "texcoord")])
-
-    # FBOs
-    tex_a = ctx.texture((w, h), 4); tex_a.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    fbo_a = ctx.framebuffer([tex_a])
-    tex_b = ctx.texture((w, h), 4); tex_b.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    fbo_b = ctx.framebuffer([tex_b])
-    feedback_tex = ctx.texture((w, h), 4); feedback_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-    feedback_fbo = ctx.framebuffer([feedback_tex])
+    chain = create_chain(ctx, w, h)
 
     # Pre-generate source images
-    source_textures = {}
-    for name, gen_fn in SOURCE_GENERATORS.items():
-        img = gen_fn(w, h)
-        tex = ctx.texture((w, h), 4, img.tobytes())
-        tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-        source_textures[name] = tex
+    source_images = {name: gen_fn(w, h) for name, gen_fn in SOURCE_GENERATORS.items()}
 
     # Generate parameter sets (with parent tracking)
     strategy = args.strategy
@@ -572,14 +474,8 @@ def main():
         filename = params_to_filename(params, iterations, source_mix, source_name, i)
         filepath = gen_dir / filename
 
-        source_tex = source_textures[source_name]
-
         t0 = time.time()
-        result = render_one(
-            ctx, transform_prog, mix_prog, vao, mix_vao,
-            source_tex, fbo_a, fbo_b, tex_a, tex_b, feedback_fbo, feedback_tex,
-            params, iterations, source_mix, w, h
-        )
+        result = render_one(chain, source_images[source_name], params, iterations, source_mix)
         dt = time.time() - t0
 
         result.save(str(filepath))
