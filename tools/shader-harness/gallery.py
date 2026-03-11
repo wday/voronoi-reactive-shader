@@ -17,7 +17,7 @@ import os
 import urllib.parse
 from pathlib import Path
 
-DEFAULT_DIR = Path("/mnt/c/Users/alien/Desktop/shader-explore")
+DEFAULT_DIR = Path.cwd()
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html>
