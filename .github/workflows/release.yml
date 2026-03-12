@@ -110,7 +110,7 @@ jobs:
           name: release-macos
           path: release-macos
 
-      - name: Create GitHub Release
+      - name: Upload artifacts to release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -121,23 +121,4 @@ jobs:
           for f in release-windows/*.dll; do [ -f "$f" ] && FILES+=("$f"); done
           for f in release-macos/*-macos.zip; do [ -f "$f" ] && FILES+=("$f"); done
 
-          PLUGIN_LIST=$(python3 scripts/list-plugins.py --format build | tr -d '\r' | while IFS='|' read -r NAME REST; do
-            echo "- **$NAME**"
-          done)
-
-          gh release create "$TAG" "${FILES[@]}" \
-            --title "$TAG" \
-            --notes "## Plugins
-          $PLUGIN_LIST
-
-          ## Installation
-
-          ### Windows (Resolume Avenue/Arena)
-          1. Download the \`.dll\` file(s)
-          2. Copy to: \`C:\\Users\\<you>\\Documents\\Resolume Avenue\\Extra Effects\\\`
-          3. Restart Resolume
-
-          ### macOS (Resolume Avenue/Arena)
-          1. Download and unzip the \`-macos.zip\` file(s)
-          2. Copy the \`.bundle\` folder to: \`~/Library/Graphics/FreeFrame Plug-Ins/\`
-          3. Restart Resolume"
+          gh release upload "$TAG" "${FILES[@]}" --clobber
