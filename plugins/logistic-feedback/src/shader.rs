@@ -3,7 +3,7 @@ use std::ffi::CString;
 use std::ptr;
 
 static VS_SRC: &str = include_str!("shaders/fullscreen.vert.glsl");
-static FS_TRANSFORM: &str = include_str!("shaders/transform.frag.glsl");
+static FS_LOGISTIC: &str = include_str!("shaders/logistic.frag.glsl");
 
 pub struct QuadGeometry {
     vao: GLuint,
@@ -126,41 +126,38 @@ impl Drop for ShaderProgram {
     }
 }
 
-pub struct TransformShader {
+pub struct LogisticShader {
     program: ShaderProgram,
     loc_input: GLint,
-    loc_scale: GLint,
-    loc_rotation: GLint,
-    loc_swirl: GLint,
-    loc_mirror: GLint,
-    loc_translate_x: GLint,
-    loc_translate_y: GLint,
+    loc_r_base: GLint,
+    loc_sensitivity: GLint,
+    loc_spatial_mode: GLint,
+    loc_dry_wet: GLint,
+    loc_texel_size: GLint,
     pub quad: QuadGeometry,
 }
 
-impl TransformShader {
+impl LogisticShader {
     pub fn new() -> Self {
-        let program = ShaderProgram::new(FS_TRANSFORM);
+        let program = ShaderProgram::new(FS_LOGISTIC);
         let quad = QuadGeometry::new();
         quad.setup_attrs(program.program);
 
         let loc_input = program.uniform_loc("u_input");
-        let loc_scale = program.uniform_loc("u_scale");
-        let loc_rotation = program.uniform_loc("u_rotation");
-        let loc_swirl = program.uniform_loc("u_swirl");
-        let loc_mirror = program.uniform_loc("u_mirror");
-        let loc_translate_x = program.uniform_loc("u_translate_x");
-        let loc_translate_y = program.uniform_loc("u_translate_y");
+        let loc_r_base = program.uniform_loc("u_r_base");
+        let loc_sensitivity = program.uniform_loc("u_sensitivity");
+        let loc_spatial_mode = program.uniform_loc("u_spatial_mode");
+        let loc_dry_wet = program.uniform_loc("u_dry_wet");
+        let loc_texel_size = program.uniform_loc("u_texel_size");
 
         Self {
             program,
             loc_input,
-            loc_scale,
-            loc_rotation,
-            loc_swirl,
-            loc_mirror,
-            loc_translate_x,
-            loc_translate_y,
+            loc_r_base,
+            loc_sensitivity,
+            loc_spatial_mode,
+            loc_dry_wet,
+            loc_texel_size,
             quad,
         }
     }
@@ -168,24 +165,33 @@ impl TransformShader {
     pub fn render(
         &self,
         input_tex: GLuint,
-        scale: f32,
-        rotation: f32,
-        swirl: f32,
-        mirror: bool,
-        translate_x: f32,
-        translate_y: f32,
+        r_base: f32,
+        sensitivity: f32,
+        spatial_mode: i32,
+        dry_wet: f32,
     ) {
+        // Query input texture dimensions for texel size
+        let (mut tex_w, mut tex_h) = (1i32, 1i32);
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, input_tex);
+            gl::GetTexLevelParameteriv(gl::TEXTURE_2D, 0, gl::TEXTURE_WIDTH, &mut tex_w);
+            gl::GetTexLevelParameteriv(gl::TEXTURE_2D, 0, gl::TEXTURE_HEIGHT, &mut tex_h);
+        }
+
         self.program.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
             gl::Uniform1i(self.loc_input, 0);
-            gl::Uniform1f(self.loc_scale, scale);
-            gl::Uniform1f(self.loc_rotation, rotation);
-            gl::Uniform1f(self.loc_swirl, swirl);
-            gl::Uniform1f(self.loc_mirror, if mirror { 1.0 } else { 0.0 });
-            gl::Uniform1f(self.loc_translate_x, translate_x);
-            gl::Uniform1f(self.loc_translate_y, translate_y);
+            gl::Uniform1f(self.loc_r_base, r_base);
+            gl::Uniform1f(self.loc_sensitivity, sensitivity);
+            gl::Uniform1i(self.loc_spatial_mode, spatial_mode);
+            gl::Uniform1f(self.loc_dry_wet, dry_wet);
+            gl::Uniform2f(
+                self.loc_texel_size,
+                1.0 / tex_w as f32,
+                1.0 / tex_h as f32,
+            );
         }
         self.quad.draw();
         unsafe {

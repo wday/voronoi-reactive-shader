@@ -3,7 +3,7 @@ use std::ffi::CString;
 use std::ptr;
 
 static VS_SRC: &str = include_str!("shaders/fullscreen.vert.glsl");
-static FS_TRANSFORM: &str = include_str!("shaders/transform.frag.glsl");
+static FS_DISPLACE: &str = include_str!("shaders/displace.frag.glsl");
 
 pub struct QuadGeometry {
     vao: GLuint,
@@ -126,41 +126,35 @@ impl Drop for ShaderProgram {
     }
 }
 
-pub struct TransformShader {
+pub struct DisplaceShader {
     program: ShaderProgram,
     loc_input: GLint,
-    loc_scale: GLint,
-    loc_rotation: GLint,
-    loc_swirl: GLint,
-    loc_mirror: GLint,
-    loc_translate_x: GLint,
-    loc_translate_y: GLint,
+    loc_amount: GLint,
+    loc_pattern: GLint,
+    loc_angle: GLint,
+    loc_dry_wet: GLint,
     pub quad: QuadGeometry,
 }
 
-impl TransformShader {
+impl DisplaceShader {
     pub fn new() -> Self {
-        let program = ShaderProgram::new(FS_TRANSFORM);
+        let program = ShaderProgram::new(FS_DISPLACE);
         let quad = QuadGeometry::new();
         quad.setup_attrs(program.program);
 
         let loc_input = program.uniform_loc("u_input");
-        let loc_scale = program.uniform_loc("u_scale");
-        let loc_rotation = program.uniform_loc("u_rotation");
-        let loc_swirl = program.uniform_loc("u_swirl");
-        let loc_mirror = program.uniform_loc("u_mirror");
-        let loc_translate_x = program.uniform_loc("u_translate_x");
-        let loc_translate_y = program.uniform_loc("u_translate_y");
+        let loc_amount = program.uniform_loc("u_amount");
+        let loc_pattern = program.uniform_loc("u_pattern");
+        let loc_angle = program.uniform_loc("u_angle");
+        let loc_dry_wet = program.uniform_loc("u_dry_wet");
 
         Self {
             program,
             loc_input,
-            loc_scale,
-            loc_rotation,
-            loc_swirl,
-            loc_mirror,
-            loc_translate_x,
-            loc_translate_y,
+            loc_amount,
+            loc_pattern,
+            loc_angle,
+            loc_dry_wet,
             quad,
         }
     }
@@ -168,24 +162,20 @@ impl TransformShader {
     pub fn render(
         &self,
         input_tex: GLuint,
-        scale: f32,
-        rotation: f32,
-        swirl: f32,
-        mirror: bool,
-        translate_x: f32,
-        translate_y: f32,
+        amount: f32,
+        pattern: i32,
+        angle: f32,
+        dry_wet: f32,
     ) {
         self.program.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
             gl::Uniform1i(self.loc_input, 0);
-            gl::Uniform1f(self.loc_scale, scale);
-            gl::Uniform1f(self.loc_rotation, rotation);
-            gl::Uniform1f(self.loc_swirl, swirl);
-            gl::Uniform1f(self.loc_mirror, if mirror { 1.0 } else { 0.0 });
-            gl::Uniform1f(self.loc_translate_x, translate_x);
-            gl::Uniform1f(self.loc_translate_y, translate_y);
+            gl::Uniform1f(self.loc_amount, amount);
+            gl::Uniform1i(self.loc_pattern, pattern);
+            gl::Uniform1f(self.loc_angle, angle);
+            gl::Uniform1f(self.loc_dry_wet, dry_wet);
         }
         self.quad.draw();
         unsafe {
