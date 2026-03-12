@@ -1,6 +1,6 @@
 # Credits & Sources
 
-This shader builds on foundational work from the real-time graphics community.
+This project builds on foundational work from the real-time graphics community.
 Below are the techniques used and their origins, for anyone who wants to learn
 more or trace the lineage.
 
@@ -82,6 +82,24 @@ The shader metadata format (the JSON header, built-in uniforms like `TIME`,
 
 ---
 
+## Logistic Map — Robert May
+
+The logistic-feedback plugin applies the discrete logistic map
+`x(n+1) = r * x(n) * (1 - x(n))` per color channel. This is the canonical
+example of a simple system exhibiting bifurcation and deterministic chaos.
+
+- **Original paper:** Robert M. May, "Simple mathematical models with very
+  complicated dynamics", Nature 261, pp. 459–467, 1976 —
+  [doi:10.1038/261459a0](https://doi.org/10.1038/261459a0)
+- **Reference:** Steven Strogatz, *Nonlinear Dynamics and Chaos*, Chapter 10
+
+## FFGL — Resolume
+
+The Free Frame GL plugin specification used by Resolume and other VJ software.
+
+- **Specification:** [freeframe.org](http://freeframe.org/)
+- **Rust bindings:** `ffgl-rs` (git submodule, see `ffgl-rs/`)
+
 ## Licensing Notes
 
 | Component | License | Commercial use? |
@@ -91,7 +109,9 @@ The shader metadata format (the JSON header, built-in uniforms like `TIME`,
 | HSV conversion (Hocevar) | WTFPL | Yes |
 | Normalized convolution (Knutsson & Westin) | Mathematical technique | Yes |
 | Value noise | Mathematical technique | Yes |
+| Logistic map | Mathematical technique | Yes |
 | ISF format | Open specification | Yes |
+| FFGL | Open specification | Yes |
 
 All components are permissively licensed or uncopyrightable mathematical
 techniques. Attribution is maintained because it's the right thing to do.

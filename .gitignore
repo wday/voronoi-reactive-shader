@@ -2,3 +2,6 @@ node_modules/
 .claude/
 docs/references/
 plugins/target/
+__pycache__/
+*.pyc
+*:Zone.Identifier
