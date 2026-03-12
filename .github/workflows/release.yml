@@ -39,10 +39,18 @@ jobs:
       - name: Build ISF plugins
         shell: bash
         run: |
+          mkdir -p isf-out
           cd ffgl-rs
           python3 ../scripts/list-plugins.py --type isf --format build | tr -d '\r' | while IFS='|' read -r NAME SHADER DLL; do
             echo "==> Building ISF plugin: $NAME ($SHADER)"
             ISF_SOURCE="$(cd .. && pwd)/$SHADER" ISF_NAME="$NAME" cargo build --release -p ffgl-isf
+            # Copy immediately — each ISF build overwrites the same output binary
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+              cp target/release/libffgl_isf.dylib "../isf-out/$DLL"
+            else
+              cp target/release/ffgl_isf.dll "../isf-out/$DLL"
+            fi
+            echo "==> Saved: isf-out/$DLL"
           done
 
       - name: Build Rust plugins

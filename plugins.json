@@ -42,6 +42,27 @@
       "type": "rust",
       "crate": "channel-displace",
       "dll": "channel_displace.dll"
+    },
+    {
+      "name": "stereo_depth",
+      "display_name": "Stereo Depth",
+      "type": "isf",
+      "shader": "stereo_depth.fs",
+      "dll": "stereo_depth.dll"
+    },
+    {
+      "name": "flow_inject",
+      "display_name": "Flow Inject",
+      "type": "isf",
+      "shader": "shaders/flow_inject.fs",
+      "dll": "flow_inject.dll"
+    },
+    {
+      "name": "flow_euler",
+      "display_name": "Flow Euler",
+      "type": "isf",
+      "shader": "shaders/flow_euler.fs",
+      "dll": "flow_euler.dll"
     }
   ]
 }

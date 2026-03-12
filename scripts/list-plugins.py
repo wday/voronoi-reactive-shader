@@ -61,10 +61,9 @@ def main():
             dll = p["dll"]
             bundle = dll.replace(".dll", "")
             if p["type"] == "isf":
-                if plat == "macos":
-                    src = "ffgl-rs/target/release/libffgl_isf.dylib"
-                else:
-                    src = "ffgl-rs/target/release/ffgl_isf.dll"
+                # ISF builds all produce the same binary; the build step
+                # copies each to isf-out/<dll> immediately after building.
+                src = f"isf-out/{dll}"
             elif p["type"] == "rust":
                 if plat == "macos":
                     src = f"plugins/target/release/lib{bundle}.dylib"
