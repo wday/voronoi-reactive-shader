@@ -1,0 +1,8 @@
+[package]
+name = "spout-publish"
+version = "0.1.0"
+edition = "2021"
+description = "Pipe raw RGBA video frames to a Spout sender on Windows."
+
+[build-dependencies]
+cc = "1"
