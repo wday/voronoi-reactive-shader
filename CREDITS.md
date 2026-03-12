@@ -114,7 +114,7 @@ The Free Frame GL plugin specification used by Resolume and other VJ software.
 | FFGL | Open specification | Yes |
 
 All components are permissively licensed or uncopyrightable mathematical
-techniques. Attribution is maintained because it's the right thing to do.
+techniques.
 
 ---
 
