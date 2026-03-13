@@ -305,6 +305,15 @@ class ShaderChain:
         self.blit_prog["u_input"].value = 0
         self.blit_vao.render()
 
+    def get_frame_bytes(self):
+        """Read the current output as raw RGBA bytes (top-left origin)."""
+        final_fbo = self.passes[-1].fbo if self.passes else self.feedback_fbo
+        data = final_fbo.read(components=4)
+        # Flip vertically: OpenGL origin is bottom-left, we want top-left
+        row_size = self.width * 4
+        rows = [data[i:i + row_size] for i in range(0, len(data), row_size)]
+        return b"".join(reversed(rows))
+
     def get_frame(self):
         """Read the current output as a PIL Image."""
         final_fbo = self.passes[-1].fbo if self.passes else self.feedback_fbo
@@ -415,6 +424,28 @@ def run_export(chain, path, num_frames):
     chain.save_frame(path)
 
 
+def run_pipe(chain, fps, max_frames=None):
+    """Run headless, writing raw RGBA frames to stdout."""
+    import time
+
+    frame_time = 1.0 / fps
+    stdout = sys.stdout.buffer
+    frame = 0
+    try:
+        while max_frames is None or frame < max_frames:
+            t0 = time.monotonic()
+            chain.render_frame()
+            stdout.write(chain.get_frame_bytes())
+            stdout.flush()
+            frame += 1
+            elapsed = time.monotonic() - t0
+            if elapsed < frame_time:
+                time.sleep(frame_time - elapsed)
+    except BrokenPipeError:
+        pass
+    print(f"Pipe: wrote {frame} frames", file=sys.stderr)
+
+
 def main():
     project_root = find_project_root()
 
@@ -425,10 +456,18 @@ def main():
     parser.add_argument("--source", help="Source image path (default: test pattern)")
     parser.add_argument("--export", help="Export final frame to PNG path")
     parser.add_argument(
-        "-n", "--frames", type=int, default=60, help="Number of frames for export mode"
+        "-n", "--frames", type=int, default=None,
+        help="Number of frames (default: 60 for export, unlimited for pipe)"
     )
     parser.add_argument("--width", type=int, default=WIDTH)
     parser.add_argument("--height", type=int, default=HEIGHT)
+    parser.add_argument(
+        "--pipe", action="store_true",
+        help="Headless mode: write raw RGBA frames to stdout"
+    )
+    parser.add_argument(
+        "--fps", type=int, default=30, help="Target framerate for pipe mode"
+    )
     parser.add_argument(
         "--list", action="store_true", help="List available shaders and exit"
     )
@@ -446,14 +485,17 @@ def main():
             print(f"  {key:40s} {path}")
         return
 
-    # Init Pygame + OpenGL
-    pygame.init()
-    pygame.font.init()
-    pygame.display.set_mode(
-        (args.width, args.height), pygame.OPENGL | pygame.DOUBLEBUF
-    )
-    pygame.display.set_caption("Shader Harness")
-    ctx = moderngl.create_context()
+    # Init GL context
+    if args.pipe:
+        ctx = moderngl.create_context(standalone=True)
+    else:
+        pygame.init()
+        pygame.font.init()
+        pygame.display.set_mode(
+            (args.width, args.height), pygame.OPENGL | pygame.DOUBLEBUF
+        )
+        pygame.display.set_caption("Shader Harness")
+        ctx = moderngl.create_context()
 
     # Resolve shader paths
     shader_paths = []
@@ -505,12 +547,13 @@ def main():
                 chain.passes[idx].set_uniform(uname, float(uval))
                 print(f"  Pass {idx} {uname} = {uval}")
 
-    if args.export:
-        run_export(chain, args.export, args.frames)
+    if args.pipe:
+        run_pipe(chain, args.fps, args.frames)
+    elif args.export:
+        run_export(chain, args.export, args.frames or 60)
     else:
         run_interactive(chain, args.width, args.height)
-
-    pygame.quit()
+        pygame.quit()
 
 
 if __name__ == "__main__":

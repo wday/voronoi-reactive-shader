@@ -1,8 +1,8 @@
 use gl::types::*;
 use std::sync::Mutex;
 
-const BUFFER_DEPTH: u32 = 900;
-const NUM_CHANNELS: usize = 4;
+const BUFFER_DEPTH: u32 = 240;
+const NUM_CHANNELS: usize = 2;
 
 pub struct ChannelBuffer {
     pub texture_array: GLuint,
@@ -14,7 +14,7 @@ pub struct ChannelBuffer {
 }
 
 static REGISTRY: Mutex<[Option<ChannelBuffer>; NUM_CHANNELS]> =
-    Mutex::new([None, None, None, None]);
+    Mutex::new([None, None]);
 
 pub fn buffer_depth() -> u32 {
     BUFFER_DEPTH
@@ -120,6 +120,13 @@ fn alloc_buffer(width: u32, height: u32) -> (GLuint, GLuint) {
         gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
         gl::TexParameteri(gl::TEXTURE_2D_ARRAY, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
         gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+
+        let err = gl::GetError();
+        if err != gl::NO_ERROR {
+            tracing::error!(gl_error = err, width, height, depth = BUFFER_DEPTH, "buffer allocation failed");
+            gl::DeleteTextures(1, &tex);
+            return (0, 0);
+        }
 
         let mut fbo: GLuint = 0;
         gl::GenFramebuffers(1, &mut fbo);

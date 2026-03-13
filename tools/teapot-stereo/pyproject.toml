@@ -1,0 +1,10 @@
+[project]
+name = "teapot-stereo"
+version = "0.1.0"
+description = "Synthetic stereo test source — rotating Utah teapot rendered from two camera offsets."
+requires-python = ">=3.12"
+dependencies = [
+    "moderngl>=5.12.0",
+    "numpy>=2.0",
+    "pygame>=2.6.1",
+]

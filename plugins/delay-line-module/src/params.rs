@@ -23,8 +23,8 @@ const SUBDIVISIONS: [(&str, f32); 7] = [
     ("4 bars", 16.0),
 ];
 
-const MAX_DELAY_MS: f32 = 5000.0;
-const MAX_DELAY_FRAMES: u32 = 899;
+const MAX_DELAY_MS: f32 = 4000.0;
+const MAX_DELAY_FRAMES: u32 = 239;
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [
@@ -47,9 +47,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             default: Some(0.0), // Channel 1
             elements: Some(vec![
                 (CString::new("1").unwrap(), 0.0),
-                (CString::new("2").unwrap(), 1.0 / 3.0),
-                (CString::new("3").unwrap(), 2.0 / 3.0),
-                (CString::new("4").unwrap(), 1.0),
+                (CString::new("2").unwrap(), 1.0),
             ]),
             ..Default::default()
         },
@@ -88,7 +86,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             default: Some(500.0 / MAX_DELAY_MS), // 500ms
             ..Default::default()
         },
-        // 5: Delay Frames (0.0–1.0 mapped to 1–899)
+        // 5: Delay Frames (0.0–1.0 mapped to 1–239)
         SimpleParamInfo {
             name: CString::new("Delay Frames").unwrap(),
             param_type: ParameterTypes::Standard,
@@ -165,7 +163,7 @@ impl DelayParams {
 
     pub fn channel(&self) -> usize {
         let v = self.values[PARAM_CHANNEL];
-        ((v * 4.0).min(3.0)) as usize
+        if v < 0.5 { 0 } else { 1 }
     }
 
     pub fn sync_mode(&self) -> SyncMode {

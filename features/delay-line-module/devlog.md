@@ -80,3 +80,38 @@ Param count: 4 → 7. Param order: Mode, Channel, Sync Mode, Subdivision, Delay 
 RTX 5070 Ti Laptop, 12GB. One active channel at 1080p (900 frames × 8MB) = ~7.2GB.
 Leaves ~3.3GB for Resolume + OS. Multi-channel at full buffer size would exceed VRAM.
 Future optimization: allocate based on actual max subdivision, not fixed 900 frames.
+
+## 2026-03-12: VRAM fix — buffer depth 900 → 240, channels 4 → 2
+
+### Problem
+
+After a power config change (possibly running on integrated GPU), Send mode showed a dim
+90-degree rotated ghost image instead of the delayed frame, and switching channels had no
+effect on VRAM usage.
+
+**Root cause**: `glTexImage3D` was silently failing — 900 frames × 1080p × 4 bytes = ~7.2 GB
+per channel, exceeding available VRAM. No GL error check after allocation meant the texture
+ID existed but had no backing storage. Reads returned undefined data (alpha=0), making the
+layer transparent and showing composition bleedthrough as a dim ghost.
+
+### Fix
+
+- **Buffer depth**: 900 → 240 frames (4 seconds at 60fps, ~1.9 GB/channel at 1080p)
+- **Channels**: 4 → 2 (two independent feedback loops is plenty)
+- **Max delay ms**: 5000 → 4000 (matches 4s buffer)
+- **Max delay frames**: 899 → 239
+- **GL error check**: `glTexImage3D` failure now logs error and returns (0, 0)
+- Subdivision table unchanged — longer subdivisions clamp to buffer max
+
+### Design documentation
+
+Added `features/delay-line-module/signal-flow.md` with mermaid diagrams covering:
+- Send as self-contained recursive overdub loop (wet-only, FX-before-write)
+- All three modes side-by-side (Send/Receive/Tap data flow)
+- Parameter relevance by mode
+- Resolume composition wiring for Receive → FX → Send feedback
+
+**Key design insight documented**: Send outputs the delayed read, not the input. The
+Resolume FX chain between Receive and Send IS the feedback function — each trip through
+the loop applies it once more. Decay comes from layer opacity or FX, not the plugin.
+Time parameters are meaningful in Send mode because they control the read position.
