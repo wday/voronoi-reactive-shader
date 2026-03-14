@@ -1,3 +1,6 @@
-[submodule "ffgl-rs"]
-	path = ffgl-rs
-	url = git@github.com:wday/ffgl-rs.git
+[submodule "vendor/ffgl-rs"]
+	path = vendor/ffgl-rs
+	url = https://github.com/wday/ffgl-rs.git
+[submodule "vendor/spout2"]
+	path = vendor/spout2
+	url = https://github.com/leadedge/Spout2.git

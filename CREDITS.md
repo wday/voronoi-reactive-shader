@@ -98,7 +98,7 @@ example of a simple system exhibiting bifurcation and deterministic chaos.
 The Free Frame GL plugin specification used by Resolume and other VJ software.
 
 - **Specification:** [freeframe.org](http://freeframe.org/)
-- **Rust bindings:** `ffgl-rs` (git submodule, see `ffgl-rs/`)
+- **Rust bindings:** `ffgl-rs` (git submodule, see `vendor/ffgl-rs/`)
 
 ## Licensing Notes
 

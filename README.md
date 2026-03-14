@@ -61,8 +61,9 @@ Evolution workflow: explore → gallery → flag keepers → evolve → repeat. 
 ```
 shaders/          ISF fragment shaders
 plugins/          Rust plugin workspace (7 crates)
-ffgl-rs/          FFGL build pipeline (git submodule)
-tools/            Shader test harness (Python/ModernGL)
+vendor/ffgl-rs/   FFGL build pipeline (git submodule)
+vendor/spout2/    Spout2 SDK for GPU texture sharing (git submodule)
+tools/            Shader test harness, stereo teapot, spout-publish
 preview/          Browser ISF preview
 features/         Feature specs, plans, devlogs
 docs/             GitHub Pages + reference papers

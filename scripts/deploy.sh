@@ -5,7 +5,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FFGL_RS_DIR="$PROJECT_DIR/ffgl-rs"
+FFGL_RS_DIR="$PROJECT_DIR/vendor/ffgl-rs"
 SHADER="$PROJECT_DIR/shaders/voronoi_reactive.fs"
 
 if [ ! -f "$SHADER" ]; then

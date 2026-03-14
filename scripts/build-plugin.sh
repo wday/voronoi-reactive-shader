@@ -40,7 +40,7 @@ if [ "$PTYPE" = "isf" ]; then
 
     echo "==> Building ISF plugin: $NAME ($PSHADER) as '$PDISPLAY'"
     cd /mnt/c && cmd.exe /c \
-        "pushd ${WIN_PROJECT}\\ffgl-rs&&set PATH=${WIN_CARGO_BIN};${WIN_SCOOP};%PATH%&&set ISF_SOURCE=${WIN_ISF_SRC}&&set ISF_NAME=${PDISPLAY}&&set CARGO_TARGET_DIR=${WIN_TARGET}&&cargo build --release -p ffgl-isf"
+        "pushd ${WIN_PROJECT}\\vendor\\ffgl-rs&&set PATH=${WIN_CARGO_BIN};${WIN_SCOOP};%PATH%&&set ISF_SOURCE=${WIN_ISF_SRC}&&set ISF_NAME=${PDISPLAY}&&set CARGO_TARGET_DIR=${WIN_TARGET}&&cargo build --release -p ffgl-isf"
 
     cp "${TARGET_DIR}/ffgl_isf.dll" "${TARGET_DIR}/${PDLL}"
     echo "==> Built: ${TARGET_DIR}/${PDLL}"

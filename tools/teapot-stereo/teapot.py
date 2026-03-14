@@ -466,8 +466,10 @@ class StereoTeapotRenderer:
         normal_mat = np.linalg.inv(model[:3, :3]).T
 
         self.prog["u_mvp"].write(mvp.T.astype("f4").tobytes())
-        self.prog["u_model"].write(model.T.astype("f4").tobytes())
-        self.prog["u_normal_mat"].write(normal_mat.T.astype("f4").tobytes())
+        if "u_model" in self.prog:
+            self.prog["u_model"].write(model.T.astype("f4").tobytes())
+        if "u_normal_mat" in self.prog:
+            self.prog["u_normal_mat"].write(normal_mat.T.astype("f4").tobytes())
 
         self.vao.render()
         self.ctx.disable(moderngl.DEPTH_TEST)

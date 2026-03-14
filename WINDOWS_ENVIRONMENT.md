@@ -83,7 +83,7 @@ I/O is significantly slower for git operations and Rust builds.
    cd voronoi-reactive-shader
 
    # If the submodule uses SSH and you only have HTTPS auth:
-   git config submodule.ffgl-rs.url https://github.com/wday/ffgl-rs.git
+   git config submodule.vendor/ffgl-rs.url https://github.com/wday/ffgl-rs.git
 
    git submodule update --init --recursive
    ```
@@ -108,7 +108,7 @@ shell.
 ### Build command (from WSL)
 
 ```bash
-cd /mnt/c && cmd.exe /c "pushd \\\\wsl\$\\Ubuntu\\home\\alien\\dev\\voronoi-reactive-shader\\ffgl-rs && set PATH=C:\Users\alien\scoop\apps\rustup\current\.cargo\bin;C:\Users\alien\scoop\shims;%PATH% && set ISF_SOURCE=Z:\home\alien\dev\voronoi-reactive-shader\shaders\voronoi_reactive.fs && set ISF_NAME=voronoi_reactive && set CARGO_TARGET_DIR=C:\Users\alien\.cargo-target\ffgl-rs && cargo build --release -p ffgl-isf"
+cd /mnt/c && cmd.exe /c "pushd \\\\wsl\$\\Ubuntu\\home\\alien\\dev\\voronoi-reactive-shader\\vendor\\ffgl-rs && set PATH=C:\Users\alien\scoop\apps\rustup\current\.cargo\bin;C:\Users\alien\scoop\shims;%PATH% && set ISF_SOURCE=Z:\home\alien\dev\voronoi-reactive-shader\shaders\voronoi_reactive.fs && set ISF_NAME=voronoi_reactive && set CARGO_TARGET_DIR=C:\Users\alien\.cargo-target\ffgl-rs && cargo build --release -p ffgl-isf"
 ```
 
 ### Key details

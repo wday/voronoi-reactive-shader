@@ -25,7 +25,7 @@ jobs:
 
       - name: Fix submodule URL (SSH → HTTPS for CI)
         run: |
-          git config --file .gitmodules submodule.ffgl-rs.url https://github.com/wday/ffgl-rs.git
+          git config --file .gitmodules submodule.vendor/ffgl-rs.url https://github.com/wday/ffgl-rs.git
           git submodule sync
           git submodule update --init --recursive
 
@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p isf-out
-          cd ffgl-rs
+          cd vendor/ffgl-rs
           python3 ../scripts/list-plugins.py --type isf --format build | tr -d '\r' | while IFS='|' read -r NAME SHADER DLL; do
             echo "==> Building ISF plugin: $NAME ($SHADER)"
             ISF_SOURCE="$(cd .. && pwd)/$SHADER" ISF_NAME="$NAME" cargo build --release -p ffgl-isf

@@ -7,16 +7,24 @@ fn main() {
     let sdk_dir = env::var("SPOUT_SDK_DIR").unwrap_or_else(|_| {
         // Default: look for Spout2 SDK relative to this crate
         let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let default = PathBuf::from(&manifest).join("SpoutSDK");
-        if default.exists() {
-            return default.to_string_lossy().into_owned();
+        let manifest = PathBuf::from(&manifest);
+        // Check local SpoutSDK/ next to Cargo.toml
+        let local = manifest.join("SpoutSDK");
+        if local.exists() {
+            return local.to_string_lossy().into_owned();
+        }
+        // Check vendored Spout2 submodule
+        let vendored = manifest
+            .join("../../vendor/spout2/SPOUTSDK/SpoutLibrary");
+        if vendored.exists() {
+            return vendored.to_string_lossy().into_owned();
         }
         panic!(
-            "SPOUT_SDK_DIR not set and SpoutSDK/ not found next to Cargo.toml.\n\
-             Download the Spout2 SDK from https://github.com/leadedge/Spout2/releases\n\
-             and either:\n\
-             - Extract to tools/spout-publish/SpoutSDK/\n\
-             - Or set SPOUT_SDK_DIR=<path to SpoutLibrary dir>"
+            "SPOUT_SDK_DIR not set and no Spout2 SDK found.\n\
+             Looked in:\n\
+             - tools/spout-publish/SpoutSDK/\n\
+             - vendor/spout2/SPOUTSDK/SpoutLibrary/\n\
+             Set SPOUT_SDK_DIR or run: git submodule update --init"
         );
     });
 

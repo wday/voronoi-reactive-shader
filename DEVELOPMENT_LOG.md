@@ -9,7 +9,7 @@ First successful build. The shader compiles, validates, and deploys as an FFGL `
 ```
 voronoi-reactive-shader/
 ├── shaders/voronoi_reactive.fs   ← ISF shader (single file, ~260 lines)
-├── ffgl-rs/                      ← git submodule: wday/ffgl-rs (build toolchain)
+├── vendor/ffgl-rs/               ← git submodule: wday/ffgl-rs (build toolchain)
 ├── scripts/
 │   ├── deploy.sh                 ← validate + build + install
 │   └── preview.sh                ← launch browser preview with hot reload
