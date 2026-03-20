@@ -6,6 +6,8 @@ static VS_SRC: &str = include_str!("shaders/fullscreen.vert.glsl");
 static FS_WRITE: &str = include_str!("shaders/write.frag.glsl");
 static FS_READ: &str = include_str!("shaders/read.frag.glsl");
 static FS_RECEIVE: &str = include_str!("shaders/receive.frag.glsl");
+static FS_SEND_OUTPUT: &str = include_str!("shaders/send_output.frag.glsl");
+static FS_FADE: &str = include_str!("shaders/fade.frag.glsl");
 
 pub struct QuadGeometry {
     vao: GLuint,
@@ -132,13 +134,25 @@ pub struct DelayShaders {
     write: ShaderProgram,
     read: ShaderProgram,
     receive: ShaderProgram,
+    send_output: ShaderProgram,
+    fade: ShaderProgram,
     loc_write_input: GLint,
+    loc_write_uv_scale: GLint,
     loc_read_buffer: GLint,
     loc_read_layer: GLint,
     loc_rx_input: GLint,
     loc_rx_buffer: GLint,
     loc_rx_layer: GLint,
     loc_rx_feedback: GLint,
+    loc_rx_uv_scale: GLint,
+    loc_so_input: GLint,
+    loc_so_buffer: GLint,
+    loc_so_layer: GLint,
+    loc_so_zero_tap: GLint,
+    loc_so_uv_scale: GLint,
+    loc_fade_buffer: GLint,
+    loc_fade_layer: GLint,
+    loc_fade_decay: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -147,35 +161,50 @@ impl DelayShaders {
         let write = ShaderProgram::new(FS_WRITE);
         let read = ShaderProgram::new(FS_READ);
         let receive = ShaderProgram::new(FS_RECEIVE);
+        let send_output = ShaderProgram::new(FS_SEND_OUTPUT);
+        let fade = ShaderProgram::new(FS_FADE);
 
         let quad = QuadGeometry::new();
         quad.setup_attrs(write.program);
 
         let loc_write_input = write.uniform_loc("u_input");
+        let loc_write_uv_scale = write.uniform_loc("u_uv_scale");
         let loc_read_buffer = read.uniform_loc("u_buffer");
         let loc_read_layer = read.uniform_loc("u_layer");
         let loc_rx_input = receive.uniform_loc("u_input");
         let loc_rx_buffer = receive.uniform_loc("u_buffer");
         let loc_rx_layer = receive.uniform_loc("u_layer");
         let loc_rx_feedback = receive.uniform_loc("u_feedback");
+        let loc_rx_uv_scale = receive.uniform_loc("u_uv_scale");
+        let loc_so_input = send_output.uniform_loc("u_input");
+        let loc_so_buffer = send_output.uniform_loc("u_buffer");
+        let loc_so_layer = send_output.uniform_loc("u_layer");
+        let loc_so_zero_tap = send_output.uniform_loc("u_zero_tap");
+        let loc_so_uv_scale = send_output.uniform_loc("u_uv_scale");
+        let loc_fade_buffer = fade.uniform_loc("u_buffer");
+        let loc_fade_layer = fade.uniform_loc("u_layer");
+        let loc_fade_decay = fade.uniform_loc("u_decay");
 
         Self {
-            write, read, receive,
-            loc_write_input,
+            write, read, receive, send_output, fade,
+            loc_write_input, loc_write_uv_scale,
             loc_read_buffer, loc_read_layer,
-            loc_rx_input, loc_rx_buffer, loc_rx_layer, loc_rx_feedback,
+            loc_rx_input, loc_rx_buffer, loc_rx_layer, loc_rx_feedback, loc_rx_uv_scale,
+            loc_so_input, loc_so_buffer, loc_so_layer, loc_so_zero_tap, loc_so_uv_scale,
+            loc_fade_buffer, loc_fade_layer, loc_fade_decay,
             quad,
         }
     }
 
     /// Passthrough: render input texture to currently bound FBO.
-    /// Used by Send for both buffer write and host output.
-    pub fn write_pass(&self, input_tex: GLuint) {
+    /// uv_scale corrects for hardware texture padding (Width/HardwareWidth, Height/HardwareHeight).
+    pub fn write_pass(&self, input_tex: GLuint, uv_scale: [f32; 2]) {
         self.write.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
             gl::Uniform1i(self.loc_write_input, 0);
+            gl::Uniform2f(self.loc_write_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {
@@ -201,9 +230,53 @@ impl DelayShaders {
         self.read.unuse();
     }
 
+    /// Send output: crossfade between delayed and live input.
+    /// output = mix(delayed, live, zero_tap)
+    pub fn send_output_pass(&self, input_tex: GLuint, buffer_tex: GLuint, layer: f32, zero_tap: f32, uv_scale: [f32; 2]) {
+        self.send_output.use_program();
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, input_tex);
+            gl::Uniform1i(self.loc_so_input, 0);
+
+            gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, buffer_tex);
+            gl::Uniform1i(self.loc_so_buffer, 1);
+            gl::Uniform1f(self.loc_so_layer, layer);
+            gl::Uniform1f(self.loc_so_zero_tap, zero_tap);
+            gl::Uniform2f(self.loc_so_uv_scale, uv_scale[0], uv_scale[1]);
+        }
+        self.quad.draw();
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE1);
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+        }
+        self.send_output.unuse();
+    }
+
+    /// Fade: blit buffer[layer] scaled by decay into current render target.
+    /// Used by first Send with decay>0 to preserve previous iteration content.
+    pub fn fade_pass(&self, buffer_tex: GLuint, layer: f32, decay: f32) {
+        self.fade.use_program();
+        unsafe {
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, buffer_tex);
+            gl::Uniform1i(self.loc_fade_buffer, 0);
+            gl::Uniform1f(self.loc_fade_layer, layer);
+            gl::Uniform1f(self.loc_fade_decay, decay);
+        }
+        self.quad.draw();
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
+        }
+        self.fade.unuse();
+    }
+
     /// Receive: mix input with delayed buffer frame.
     /// output = clamp(input + feedback * buffer[layer])
-    pub fn receive_pass(&self, input_tex: GLuint, buffer_tex: GLuint, layer: f32, feedback: f32) {
+    pub fn receive_pass(&self, input_tex: GLuint, buffer_tex: GLuint, layer: f32, feedback: f32, uv_scale: [f32; 2]) {
         self.receive.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
@@ -215,6 +288,7 @@ impl DelayShaders {
             gl::Uniform1i(self.loc_rx_buffer, 1);
             gl::Uniform1f(self.loc_rx_layer, layer);
             gl::Uniform1f(self.loc_rx_feedback, feedback);
+            gl::Uniform2f(self.loc_rx_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {
@@ -250,6 +324,14 @@ unsafe fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
     let program = gl::CreateProgram();
     gl::AttachShader(program, vs);
     gl::AttachShader(program, fs);
+
+    // Force consistent attribute locations across all programs sharing the same VAO.
+    // GLSL 150 doesn't support layout(location=...), so we must bind before linking.
+    let pos_name = CString::new("position").unwrap();
+    let uv_name = CString::new("texcoord").unwrap();
+    gl::BindAttribLocation(program, 0, pos_name.as_ptr());
+    gl::BindAttribLocation(program, 1, uv_name.as_ptr());
+
     gl::LinkProgram(program);
 
     let mut status = gl::FALSE as GLint;

@@ -51,15 +51,20 @@ impl DelayLine {
         self.last_frame_time = Some(now);
     }
 
-    fn draw_send(&mut self, data: &FFGLData, input_tex: GLuint, width: u32, height: u32, host_fbo: GLint, host_viewport: [GLint; 4]) {
+    fn draw_send(&mut self, data: &FFGLData, input_tex: GLuint, width: u32, height: u32, hw_width: u32, hw_height: u32, host_fbo: GLint, host_viewport: [GLint; 4]) {
         let channel = self.params.channel();
-        let (buf_tex, fbo, write_pos) = registry::ensure_channel(channel, width, height);
+        let (buf_tex, fbo, write_pos, is_first) = registry::begin_frame_write(channel, width, height);
         let depth = registry::buffer_depth();
         let d = self.delay_frames(data.host_beat.bpm);
         let read_layer = ((write_pos + depth - d) % depth) as f32;
         let shaders = self.shaders.as_ref().unwrap();
+        let uv_scale = [
+            width as f32 / hw_width as f32,
+            height as f32 / hw_height as f32,
+        ];
+        let decay = self.params.decay();
 
-        // Write input to buffer[write_pos]
+        // Bind buffer[write_pos] as render target
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
             gl::FramebufferTextureLayer(
@@ -71,9 +76,34 @@ impl DelayLine {
             );
             gl::Viewport(0, 0, width as i32, height as i32);
         }
-        shaders.write_pass(input_tex);
 
-        // Output delayed frame (not passthrough) to host FBO
+        if is_first && decay <= 0.0 {
+            // Clean overwrite — seed / backward compatible path
+            shaders.write_pass(input_tex, uv_scale);
+        } else if is_first {
+            // First Send with decay: fade previous iteration, then additive write
+            shaders.fade_pass(buf_tex, read_layer, decay);
+            unsafe {
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::ONE, gl::ONE);
+            }
+            shaders.write_pass(input_tex, uv_scale);
+            unsafe {
+                gl::Disable(gl::BLEND);
+            }
+        } else {
+            // Subsequent Send in same frame: additive blend
+            unsafe {
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::ONE, gl::ONE);
+            }
+            shaders.write_pass(input_tex, uv_scale);
+            unsafe {
+                gl::Disable(gl::BLEND);
+            }
+        }
+
+        // Output to host FBO: crossfade between delayed and live based on zero_tap
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(
@@ -81,12 +111,15 @@ impl DelayLine {
                 host_viewport[2], host_viewport[3],
             );
         }
-        shaders.read_pass(buf_tex, read_layer);
-
-        registry::advance_write_pos(channel);
+        let zero_tap = self.params.zero_tap();
+        if zero_tap <= 0.0 {
+            shaders.read_pass(buf_tex, read_layer);
+        } else {
+            shaders.send_output_pass(input_tex, buf_tex, read_layer, zero_tap, uv_scale);
+        }
     }
 
-    fn draw_receive(&mut self, data: &FFGLData, input_tex: GLuint, host_fbo: GLint, host_viewport: [GLint; 4]) {
+    fn draw_receive(&mut self, data: &FFGLData, input_tex: GLuint, uv_scale: [f32; 2], host_fbo: GLint, host_viewport: [GLint; 4]) {
         let channel = self.params.channel();
         let shaders = self.shaders.as_ref().unwrap();
 
@@ -101,7 +134,7 @@ impl DelayLine {
                         host_viewport[2], host_viewport[3],
                     );
                 }
-                shaders.write_pass(input_tex);
+                shaders.write_pass(input_tex, uv_scale);
                 return;
             }
         };
@@ -119,7 +152,7 @@ impl DelayLine {
                 host_viewport[2], host_viewport[3],
             );
         }
-        shaders.receive_pass(input_tex, buf_tex, read_layer, feedback);
+        shaders.receive_pass(input_tex, buf_tex, read_layer, feedback, uv_scale);
     }
 
     fn draw_tap(&mut self, data: &FFGLData, host_fbo: GLint, host_viewport: [GLint; 4]) {
@@ -185,10 +218,15 @@ impl SimpleFFGLInstance for DelayLine {
             0
         };
 
-        let (width, height) = if !frame_data.textures.is_empty() {
-            (frame_data.textures[0].Width, frame_data.textures[0].Height)
+        let (width, height, hw_width, hw_height) = if !frame_data.textures.is_empty() {
+            (
+                frame_data.textures[0].Width,
+                frame_data.textures[0].Height,
+                frame_data.textures[0].HardwareWidth,
+                frame_data.textures[0].HardwareHeight,
+            )
         } else {
-            (1920, 1080) // fallback for Tap with no input
+            (1920, 1080, 1920, 1080)
         };
 
         self.update_fps();
@@ -210,11 +248,16 @@ impl SimpleFFGLInstance for DelayLine {
             gl::Disable(gl::DEPTH_TEST);
         }
 
+        let uv_scale = [
+            width as f32 / hw_width as f32,
+            height as f32 / hw_height as f32,
+        ];
+
         match self.params.mode() {
-            Mode::Send => self.draw_send(data, input_tex, width, height, host_fbo, host_viewport),
+            Mode::Send => self.draw_send(data, input_tex, width, height, hw_width, hw_height, host_fbo, host_viewport),
             Mode::Receive => {
                 if input_tex != 0 {
-                    self.draw_receive(data, input_tex, host_fbo, host_viewport);
+                    self.draw_receive(data, input_tex, uv_scale, host_fbo, host_viewport);
                 }
             }
             Mode::Tap => self.draw_tap(data, host_fbo, host_viewport),
@@ -248,6 +291,11 @@ impl SimpleFFGLInstance for DelayLine {
                 bpm = format!("{:.1}", data.host_beat.bpm),
                 delay_frames = self.delay_frames(data.host_beat.bpm),
                 feedback = format!("{:.2}", self.params.feedback()),
+                zero_tap = format!("{:.2}", self.params.zero_tap()),
+                decay = format!("{:.2}", self.params.decay()),
+                tex_w = width, tex_h = height,
+                hw_w = hw_width, hw_h = hw_height,
+                vp = format!("{:?}", host_viewport),
                 "status"
             );
         }

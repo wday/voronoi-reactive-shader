@@ -135,6 +135,7 @@ pub struct TransformShader {
     loc_mirror: GLint,
     loc_translate_x: GLint,
     loc_translate_y: GLint,
+    loc_uv_scale: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -151,6 +152,7 @@ impl TransformShader {
         let loc_mirror = program.uniform_loc("u_mirror");
         let loc_translate_x = program.uniform_loc("u_translate_x");
         let loc_translate_y = program.uniform_loc("u_translate_y");
+        let loc_uv_scale = program.uniform_loc("u_uv_scale");
 
         Self {
             program,
@@ -161,6 +163,7 @@ impl TransformShader {
             loc_mirror,
             loc_translate_x,
             loc_translate_y,
+            loc_uv_scale,
             quad,
         }
     }
@@ -174,6 +177,7 @@ impl TransformShader {
         mirror: bool,
         translate_x: f32,
         translate_y: f32,
+        uv_scale: [f32; 2],
     ) {
         self.program.use_program();
         unsafe {
@@ -186,6 +190,7 @@ impl TransformShader {
             gl::Uniform1f(self.loc_mirror, if mirror { 1.0 } else { 0.0 });
             gl::Uniform1f(self.loc_translate_x, translate_x);
             gl::Uniform1f(self.loc_translate_y, translate_y);
+            gl::Uniform2f(self.loc_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {
@@ -218,6 +223,12 @@ unsafe fn link_program(vs: GLuint, fs: GLuint) -> GLuint {
     let program = gl::CreateProgram();
     gl::AttachShader(program, vs);
     gl::AttachShader(program, fs);
+
+    let pos_name = CString::new("position").unwrap();
+    let uv_name = CString::new("texcoord").unwrap();
+    gl::BindAttribLocation(program, 0, pos_name.as_ptr());
+    gl::BindAttribLocation(program, 1, uv_name.as_ptr());
+
     gl::LinkProgram(program);
 
     let mut status = gl::FALSE as GLint;

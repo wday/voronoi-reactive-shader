@@ -9,6 +9,7 @@ uniform float u_swirl;
 uniform float u_mirror;
 uniform float u_translate_x;
 uniform float u_translate_y;
+uniform vec2 u_uv_scale;
 
 void main() {
     // Scale, swirl, rotate around center
@@ -45,6 +46,7 @@ void main() {
                  * smoothstep(0.0, edge, transformed_uv.y) * smoothstep(1.0, 1.0 - edge, transformed_uv.y);
     }
 
-    vec4 color = texture(u_input, transformed_uv) * inBounds;
+    // Scale UVs to account for hardware texture padding
+    vec4 color = texture(u_input, transformed_uv * u_uv_scale) * inBounds;
     out_color = color;
 }

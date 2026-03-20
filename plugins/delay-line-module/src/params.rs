@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 7;
+pub const NUM_PARAMS: usize = 9;
 pub const PARAM_MODE: usize = 0;
 pub const PARAM_CHANNEL: usize = 1;
 pub const PARAM_SYNC_MODE: usize = 2;
@@ -11,6 +11,8 @@ pub const PARAM_SUBDIVISION: usize = 3;
 pub const PARAM_DELAY_MS: usize = 4;
 pub const PARAM_DELAY_FRAMES: usize = 5;
 pub const PARAM_FEEDBACK: usize = 6;
+pub const PARAM_ZERO_TAP: usize = 7;
+pub const PARAM_DECAY: usize = 8;
 
 /// Subdivision options: (label, beats)
 const SUBDIVISIONS: [(&str, f32); 7] = [
@@ -79,18 +81,22 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ),
             ..Default::default()
         },
-        // 4: Delay Ms (0.0–1.0 mapped to 0–5000ms)
+        // 4: Delay Ms (integer, 1–4000)
         SimpleParamInfo {
             name: CString::new("Delay Ms").unwrap(),
-            param_type: ParameterTypes::Standard,
-            default: Some(500.0 / MAX_DELAY_MS), // 500ms
+            param_type: ParameterTypes::Integer,
+            default: Some(500.0),
+            min: Some(1.0),
+            max: Some(MAX_DELAY_MS),
             ..Default::default()
         },
-        // 5: Delay Frames (0.0–1.0 mapped to 1–239)
+        // 5: Delay Frames (integer, 1–239)
         SimpleParamInfo {
             name: CString::new("Delay Frames").unwrap(),
-            param_type: ParameterTypes::Standard,
-            default: Some(30.0 / MAX_DELAY_FRAMES as f32),
+            param_type: ParameterTypes::Integer,
+            default: Some(30.0),
+            min: Some(1.0),
+            max: Some(MAX_DELAY_FRAMES as f32),
             ..Default::default()
         },
         // 6: Feedback (Receive only)
@@ -98,6 +104,20 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             name: CString::new("Feedback").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(0.5),
+            ..Default::default()
+        },
+        // 7: Zero Tap (Send only)
+        SimpleParamInfo {
+            name: CString::new("Zero Tap").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(0.0),
+            ..Default::default()
+        },
+        // 8: Decay (Send only — controls previous-iteration survival for overdub/IFS)
+        SimpleParamInfo {
+            name: CString::new("Decay").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(0.0),
             ..Default::default()
         },
     ]
@@ -129,13 +149,15 @@ impl DelayParams {
     pub fn new() -> Self {
         Self {
             values: [
-                0.0,                            // Mode: Receive
-                0.0,                            // Channel: 1
-                0.0,                            // Sync Mode: Subdivision
-                2.0 / 6.0,                     // Subdivision: 1/4
-                500.0 / MAX_DELAY_MS,           // Delay Ms: 500ms
-                30.0 / MAX_DELAY_FRAMES as f32, // Delay Frames: 30
-                0.5,                            // Feedback
+                0.0,    // Mode: Receive
+                0.0,    // Channel: 1
+                0.0,    // Sync Mode: Subdivision
+                2.0 / 6.0, // Subdivision: 1/4
+                500.0,  // Delay Ms: 500ms (actual value)
+                30.0,   // Delay Frames: 30 (actual value)
+                0.5,    // Feedback
+                0.0,    // Zero Tap
+                0.0,    // Decay
             ],
         }
     }
@@ -146,7 +168,11 @@ impl DelayParams {
 
     pub fn set(&mut self, index: usize, value: f32) {
         if index < NUM_PARAMS {
-            self.values[index] = value.clamp(0.0, 1.0);
+            self.values[index] = match index {
+                PARAM_DELAY_MS => value.clamp(1.0, MAX_DELAY_MS),
+                PARAM_DELAY_FRAMES => value.clamp(1.0, MAX_DELAY_FRAMES as f32),
+                _ => value.clamp(0.0, 1.0),
+            };
         }
     }
 
@@ -185,15 +211,22 @@ impl DelayParams {
     }
 
     pub fn delay_ms(&self) -> f32 {
-        self.values[PARAM_DELAY_MS] * MAX_DELAY_MS
+        self.values[PARAM_DELAY_MS]
     }
 
     pub fn delay_frames_raw(&self) -> u32 {
-        let v = self.values[PARAM_DELAY_FRAMES];
-        (v * MAX_DELAY_FRAMES as f32).round().max(1.0) as u32
+        self.values[PARAM_DELAY_FRAMES].round() as u32
     }
 
     pub fn feedback(&self) -> f32 {
         self.values[PARAM_FEEDBACK]
+    }
+
+    pub fn zero_tap(&self) -> f32 {
+        self.values[PARAM_ZERO_TAP]
+    }
+
+    pub fn decay(&self) -> f32 {
+        self.values[PARAM_DECAY]
     }
 }
