@@ -15,28 +15,23 @@ pub struct DelayLine {
     fps_estimate: f32,
     last_frame_time: Option<Instant>,
     frame_count: u64,
+    /// Latched loop length (Send) or tap offset (Receive) in frames.
+    /// Only recomputed when inputs change significantly.
+    latched_delay: u32,
+    last_bpm: f32,
+    last_sync_mode: SyncMode,
+    last_subdivision: f32,
+    last_delay_ms: f32,
+    last_delay_frames: u32,
 }
 
 impl DelayLine {
-    /// Convert current delay settings into a frame offset for the circular buffer.
-    ///
-    /// - Called from all three modes (`Send`, `Receive`, `Tap`) to translate the
-    ///   plugin's user-configured delay into an integral frame index.
-    /// - Uses `sync_mode`:
-    ///     * `Subdivision` -> beat sync via current `bpm` (needs host beat info)
-    ///     * `Ms` -> time-based delay in milliseconds
-    ///     * `Frames` -> direct frame count from user parameter
-    /// - Clamps into `[1, registry::buffer_depth() - 1]` to avoid zero or out-of-buffer wrap.
-    ///
-    /// Assumptions:
-    /// - `bpm` is valid and positive for subdivision mode; if <=0 it falls back to 30 frames.
-    /// - `fps_estimate` has been periodically refreshed by `update_fps()`.
-    /// - `registry::buffer_depth()` reflects currently allocated delay depth.
-    fn delay_frames(&self, bpm: f32) -> u32 {
+    /// Compute delay in frames from current params. Only called when inputs change.
+    fn compute_delay_frames(&self, bpm: f32, max: u32) -> u32 {
         let d = match self.params.sync_mode() {
             SyncMode::Subdivision => {
                 if bpm <= 0.0 {
-                    return 30;
+                    return 30_u32.min(max);
                 }
                 let beat_duration = 60.0 / bpm;
                 let delay_secs = self.params.subdivision_beats() * beat_duration;
@@ -50,7 +45,33 @@ impl DelayLine {
                 self.params.delay_frames_raw()
             }
         };
-        d.clamp(1, registry::buffer_depth() - 1)
+        d.clamp(1, max)
+    }
+
+    /// Get latched delay, recomputing only when BPM or params actually change.
+    fn delay_frames(&mut self, bpm: f32, max: u32) -> u32 {
+        let sync = self.params.sync_mode();
+        let subdivision = self.params.subdivision_beats();
+        let delay_ms = self.params.delay_ms();
+        let delay_raw = self.params.delay_frames_raw();
+
+        let changed = sync != self.last_sync_mode
+            || (bpm - self.last_bpm).abs() > 0.5
+            || subdivision != self.last_subdivision
+            || (delay_ms - self.last_delay_ms).abs() > 0.5
+            || delay_raw != self.last_delay_frames
+            || self.latched_delay == 0;
+
+        if changed {
+            self.latched_delay = self.compute_delay_frames(bpm, max);
+            self.last_bpm = bpm;
+            self.last_sync_mode = sync;
+            self.last_subdivision = subdivision;
+            self.last_delay_ms = delay_ms;
+            self.last_delay_frames = delay_raw;
+        }
+
+        self.latched_delay.clamp(1, max)
     }
 
     fn update_fps(&mut self) {
@@ -65,45 +86,21 @@ impl DelayLine {
         self.last_frame_time = Some(now);
     }
 
-    /// Render a send-pass into the delay buffer and mix output back to host frame buffer.
+    /// Write input into the delay buffer. Send's delay params set the loop length.
     ///
-    /// Purpose:
-    /// - Write the current input frame into the plugin’s circular delay buffer.
-    /// - Optionally apply decay/fade/blend behavior on first use, then accumulate feedback.
-    /// - Finally, restore rendering to the host FBO and output the delayed result or crossfade with live input.
-    ///
-    /// When:
-    /// - Called in `Mode::Send` from `draw()` every frame.
-    ///
-    /// Assumptions:
-    /// - `self.shaders` is initialized and `DelayShaders` are ready.
-    /// - `host_fbo` + `host_viewport` represent host context state saved earlier.
-    /// - `registry::begin_frame_write()` yields valid buffer texture layer and `write_pos`.
-    /// - `delay_frames(data.host_beat.bpm)` reflects user mode + BPM sync and is in-bounds.
-    ///
-    /// Behavior:
-    /// - Binds local delay FBO, renders input into current write layer.
-    /// - If transfer is first in channel and no decay: simple overwrite.
-    /// - Otherwise uses blend and fade modes to create feedback drop-in.
-    /// - Returns control to host FBO and passes input through at `passthrough` level (0=black).
+    /// Write formula: decay * old + input
+    ///   decay=0 → clean overwrite, decay=0.9 → long trails
     fn draw_send(&mut self, data: &FFGLData, input_tex: GLuint, width: u32, height: u32, hw_width: u32, hw_height: u32, host_fbo: GLint, host_viewport: [GLint; 4]) {
         let channel = self.params.channel();
-        let (buf_tex, fbo, write_pos, is_first) = registry::begin_frame_write(channel, width, height);
-        let depth = registry::buffer_depth();
-        let d = self.delay_frames(data.host_beat.bpm);
-        // Circular buffer read index: we want the frame `d` behind write_pos.
-        // With math it is write_pos - d, but for wrapping and unsigned safety we add one full cycle first.
-        // This is like music intervals: moving up a fifth is complementary to moving down a fourth.
-        //   write_pos + depth - d  -- one cycle above then back `d` steps, equivalent to backwards `d`
-        //   % depth                -- wrap into [0, depth-1]
-        // Example: depth=5, write_pos=0, d=1 -> (0+5-1)%5 = 4 (back one step)
-        let read_layer = ((write_pos + depth - d) % depth) as f32;
+        let loop_length = self.delay_frames(data.host_beat.bpm, registry::buffer_depth());
+        let (buf_tex, fbo, write_pos) = registry::begin_frame_write(channel, loop_length, width, height);
         let shaders = self.shaders.as_ref().unwrap();
         let uv_scale = [
             width as f32 / hw_width as f32,
             height as f32 / hw_height as f32,
         ];
         let decay = self.params.decay();
+        let write_layer = write_pos as f32;
 
         // Bind buffer[write_pos] as render target
         unsafe {
@@ -118,30 +115,15 @@ impl DelayLine {
             gl::Viewport(0, 0, width as i32, height as i32);
         }
 
-        if is_first && decay <= 0.0 {
-            // Clean overwrite — seed / backward compatible path
-            shaders.write_pass(input_tex, uv_scale);
-        } else if is_first {
-            // First Send with decay: fade previous iteration, then additive write
-            shaders.fade_pass(buf_tex, read_layer, decay);
-            unsafe {
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::ONE, gl::ONE);
-            }
-            shaders.write_pass(input_tex, uv_scale);
-            unsafe {
-                gl::Disable(gl::BLEND);
-            }
-        } else {
-            // Subsequent Send in same frame: additive blend
-            unsafe {
-                gl::Enable(gl::BLEND);
-                gl::BlendFunc(gl::ONE, gl::ONE);
-            }
-            shaders.write_pass(input_tex, uv_scale);
-            unsafe {
-                gl::Disable(gl::BLEND);
-            }
+        // frame[write_pos] = decay * frame[write_pos] + input
+        shaders.fade_pass(buf_tex, write_layer, decay);
+        unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::ONE, gl::ONE);
+        }
+        shaders.write_pass(input_tex, uv_scale);
+        unsafe {
+            gl::Disable(gl::BLEND);
         }
 
         // Output to host FBO: pass input through at passthrough level (0=black).
@@ -156,14 +138,17 @@ impl DelayLine {
         shaders.passthrough_pass(input_tex, self.params.passthrough(), uv_scale);
     }
 
+    /// Read from delay buffer, mix with live input via passthrough.
+    /// passthrough=0 → pure delayed, passthrough=1 → bypass (live input only).
+    /// Receive's delay params set the tap offset within Send's loop.
     fn draw_receive(&mut self, data: &FFGLData, input_tex: GLuint, uv_scale: [f32; 2], host_fbo: GLint, host_viewport: [GLint; 4]) {
         let channel = self.params.channel();
-        let shaders = self.shaders.as_ref().unwrap();
 
-        // If no Send has written to this channel yet, passthrough
+        // If no Send has written to this channel yet, passthrough live input
         let buf_info = match registry::read_channel(channel) {
             Some(info) => info,
             None => {
+                let shaders = self.shaders.as_ref().unwrap();
                 unsafe {
                     gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
                     gl::Viewport(
@@ -176,48 +161,13 @@ impl DelayLine {
             }
         };
 
-        let (buf_tex, write_pos, _buf_w, _buf_h) = buf_info;
-        let depth = registry::buffer_depth();
-        let d = self.delay_frames(data.host_beat.bpm);
-        let read_layer = ((write_pos + depth - d) % depth) as f32;
-        let feedback = self.params.feedback();
-
-        unsafe {
-            gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
-            gl::Viewport(
-                host_viewport[0], host_viewport[1],
-                host_viewport[2], host_viewport[3],
-            );
-        }
-        shaders.receive_pass(input_tex, buf_tex, read_layer, feedback, uv_scale);
-    }
-
-    fn draw_tap(&mut self, data: &FFGLData, uv_scale: [f32; 2], host_fbo: GLint, host_viewport: [GLint; 4]) {
-        let channel = self.params.channel();
+        let (buf_tex, write_pos, loop_length, _buf_w, _buf_h) = buf_info;
+        // Compute tap offset before borrowing shaders
+        let d = self.delay_frames(data.host_beat.bpm, loop_length);
+        let read_layer = ((write_pos + loop_length - d) % loop_length) as f32;
+        let passthrough = self.params.passthrough();
         let shaders = self.shaders.as_ref().unwrap();
 
-        // If no Send has written to this channel yet, output black
-        let buf_info = match registry::read_channel(channel) {
-            Some(info) => info,
-            None => {
-                unsafe {
-                    gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
-                    gl::Viewport(
-                        host_viewport[0], host_viewport[1],
-                        host_viewport[2], host_viewport[3],
-                    );
-                    gl::ClearColor(0.0, 0.0, 0.0, 0.0);
-                    gl::Clear(gl::COLOR_BUFFER_BIT);
-                }
-                return;
-            }
-        };
-
-        let (buf_tex, write_pos, _buf_w, _buf_h) = buf_info;
-        let depth = registry::buffer_depth();
-        let d = self.delay_frames(data.host_beat.bpm);
-        let read_layer = ((write_pos + depth - d) % depth) as f32;
-
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(
@@ -225,7 +175,7 @@ impl DelayLine {
                 host_viewport[2], host_viewport[3],
             );
         }
-        shaders.read_pass(buf_tex, read_layer, uv_scale);
+        shaders.receive_pass(input_tex, buf_tex, read_layer, passthrough, uv_scale);
     }
 }
 
@@ -241,6 +191,12 @@ impl SimpleFFGLInstance for DelayLine {
             fps_estimate: 60.0,
             last_frame_time: None,
             frame_count: 0,
+            latched_delay: 0,
+            last_bpm: 0.0,
+            last_sync_mode: SyncMode::Subdivision,
+            last_subdivision: 0.0,
+            last_delay_ms: 0.0,
+            last_delay_frames: 0,
         }
     }
 
@@ -292,12 +248,7 @@ impl SimpleFFGLInstance for DelayLine {
 
         match self.params.mode() {
             Mode::Send => self.draw_send(data, input_tex, width, height, hw_width, hw_height, host_fbo, host_viewport),
-            Mode::Receive => {
-                if input_tex != 0 {
-                    self.draw_receive(data, input_tex, uv_scale, host_fbo, host_viewport);
-                }
-            }
-            Mode::Tap => self.draw_tap(data, uv_scale, host_fbo, host_viewport),
+            Mode::Receive => self.draw_receive(data, input_tex, uv_scale, host_fbo, host_viewport),
         }
 
         // Restore host GL state
@@ -312,7 +263,6 @@ impl SimpleFFGLInstance for DelayLine {
             let mode_str = match self.params.mode() {
                 Mode::Send => "send",
                 Mode::Receive => "receive",
-                Mode::Tap => "tap",
             };
             let sync_str = match self.params.sync_mode() {
                 SyncMode::Subdivision => "subdivision",
@@ -326,8 +276,7 @@ impl SimpleFFGLInstance for DelayLine {
                 sync = sync_str,
                 fps = format!("{:.1}", self.fps_estimate),
                 bpm = format!("{:.1}", data.host_beat.bpm),
-                delay_frames = self.delay_frames(data.host_beat.bpm),
-                feedback = format!("{:.2}", self.params.feedback()),
+                delay_frames = self.latched_delay,
                 passthrough = format!("{:.2}", self.params.passthrough()),
                 decay = format!("{:.2}", self.params.decay()),
                 tex_w = width, tex_h = height,

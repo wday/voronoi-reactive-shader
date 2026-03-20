@@ -13,6 +13,7 @@ pub struct ChannelBuffer {
     pub texture_array: GLuint,
     pub fbo: GLuint,
     pub write_pos: u32,
+    pub loop_length: u32,
     pub width: u32,
     pub height: u32,
     pub refcount: u32,
@@ -26,20 +27,19 @@ pub fn buffer_depth() -> u32 {
     BUFFER_DEPTH
 }
 
-/// Get buffer info for reading. Returns (texture_array, write_pos, width, height) or None.
-pub fn read_channel(channel: usize) -> Option<(GLuint, u32, u32, u32)> {
+/// Get buffer info for reading. Returns (texture_array, write_pos, loop_length, width, height) or None.
+pub fn read_channel(channel: usize) -> Option<(GLuint, u32, u32, u32, u32)> {
     let reg = REGISTRY.lock().unwrap();
-    reg[channel].as_ref().map(|b| (b.texture_array, b.write_pos, b.width, b.height))
+    reg[channel].as_ref().map(|b| (b.texture_array, b.write_pos, b.loop_length, b.width, b.height))
 }
 
-/// Begin a frame write for the given channel. Returns (tex, fbo, write_pos, is_first).
+/// Begin a frame write for the given channel. Returns (tex, fbo, write_pos).
 ///
-/// If >2ms since last advance, advances `write_pos` and returns `is_first=true`.
-/// Otherwise returns current `write_pos` and `is_first=false` (subsequent Send in same frame).
-pub fn begin_frame_write(channel: usize, width: u32, height: u32) -> (GLuint, GLuint, u32, bool) {
+/// Send provides `loop_length` — write_pos wraps at this value (clamped to BUFFER_DEPTH).
+/// If >2ms since last advance, advances write_pos.
+pub fn begin_frame_write(channel: usize, loop_length: u32, width: u32, height: u32) -> (GLuint, GLuint, u32) {
     let mut reg = REGISTRY.lock().unwrap();
 
-    // ensure_channel logic inlined so we only lock once
     let needs_alloc = match &reg[channel] {
         Some(b) => b.width != width || b.height != height,
         None => true,
@@ -58,6 +58,7 @@ pub fn begin_frame_write(channel: usize, width: u32, height: u32) -> (GLuint, GL
             texture_array: tex,
             fbo,
             write_pos: 0,
+            loop_length: loop_length.clamp(1, BUFFER_DEPTH),
             width,
             height,
             refcount: 0,
@@ -66,15 +67,16 @@ pub fn begin_frame_write(channel: usize, width: u32, height: u32) -> (GLuint, GL
     }
 
     let b = reg[channel].as_mut().unwrap();
-    let now = Instant::now();
-    let is_first = now.duration_since(b.last_advance_time) > FRAME_THRESHOLD;
+    let ll = loop_length.clamp(1, BUFFER_DEPTH);
+    b.loop_length = ll;
 
-    if is_first {
-        b.write_pos = (b.write_pos + 1) % BUFFER_DEPTH;
+    let now = Instant::now();
+    if now.duration_since(b.last_advance_time) > FRAME_THRESHOLD {
+        b.write_pos = (b.write_pos + 1) % ll;
         b.last_advance_time = now;
     }
 
-    (b.texture_array, b.fbo, b.write_pos, is_first)
+    (b.texture_array, b.fbo, b.write_pos)
 }
 
 /// Increment refcount when an instance starts using a channel.

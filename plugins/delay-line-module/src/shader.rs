@@ -4,7 +4,6 @@ use std::ptr;
 
 static VS_SRC: &str = include_str!("shaders/fullscreen.vert.glsl");
 static FS_WRITE: &str = include_str!("shaders/write.frag.glsl");
-static FS_READ: &str = include_str!("shaders/read.frag.glsl");
 static FS_RECEIVE: &str = include_str!("shaders/receive.frag.glsl");
 static FS_SEND_OUTPUT: &str = include_str!("shaders/send_output.frag.glsl");
 static FS_FADE: &str = include_str!("shaders/fade.frag.glsl");
@@ -132,19 +131,15 @@ impl Drop for ShaderProgram {
 
 pub struct DelayShaders {
     write: ShaderProgram,
-    read: ShaderProgram,
     receive: ShaderProgram,
     send_output: ShaderProgram,
     fade: ShaderProgram,
     loc_write_input: GLint,
     loc_write_uv_scale: GLint,
-    loc_read_buffer: GLint,
-    loc_read_layer: GLint,
-    loc_read_uv_scale: GLint,
     loc_rx_input: GLint,
     loc_rx_buffer: GLint,
     loc_rx_layer: GLint,
-    loc_rx_feedback: GLint,
+    loc_rx_passthrough: GLint,
     loc_rx_uv_scale: GLint,
     loc_so_input: GLint,
     loc_so_passthrough: GLint,
@@ -158,7 +153,6 @@ pub struct DelayShaders {
 impl DelayShaders {
     pub fn new() -> Self {
         let write = ShaderProgram::new(FS_WRITE);
-        let read = ShaderProgram::new(FS_READ);
         let receive = ShaderProgram::new(FS_RECEIVE);
         let send_output = ShaderProgram::new(FS_SEND_OUTPUT);
         let fade = ShaderProgram::new(FS_FADE);
@@ -168,13 +162,10 @@ impl DelayShaders {
 
         let loc_write_input = write.uniform_loc("u_input");
         let loc_write_uv_scale = write.uniform_loc("u_uv_scale");
-        let loc_read_buffer = read.uniform_loc("u_buffer");
-        let loc_read_layer = read.uniform_loc("u_layer");
-        let loc_read_uv_scale = read.uniform_loc("u_uv_scale");
         let loc_rx_input = receive.uniform_loc("u_input");
         let loc_rx_buffer = receive.uniform_loc("u_buffer");
         let loc_rx_layer = receive.uniform_loc("u_layer");
-        let loc_rx_feedback = receive.uniform_loc("u_feedback");
+        let loc_rx_passthrough = receive.uniform_loc("u_passthrough");
         let loc_rx_uv_scale = receive.uniform_loc("u_uv_scale");
         let loc_so_input = send_output.uniform_loc("u_input");
         let loc_so_passthrough = send_output.uniform_loc("u_passthrough");
@@ -184,10 +175,9 @@ impl DelayShaders {
         let loc_fade_decay = fade.uniform_loc("u_decay");
 
         Self {
-            write, read, receive, send_output, fade,
+            write, receive, send_output, fade,
             loc_write_input, loc_write_uv_scale,
-            loc_read_buffer, loc_read_layer, loc_read_uv_scale,
-            loc_rx_input, loc_rx_buffer, loc_rx_layer, loc_rx_feedback, loc_rx_uv_scale,
+            loc_rx_input, loc_rx_buffer, loc_rx_layer, loc_rx_passthrough, loc_rx_uv_scale,
             loc_so_input, loc_so_passthrough, loc_so_uv_scale,
             loc_fade_buffer, loc_fade_layer, loc_fade_decay,
             quad,
@@ -209,24 +199,6 @@ impl DelayShaders {
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
         self.write.unuse();
-    }
-
-    /// Read: output a specific layer from the buffer (wet-only, no mixing).
-    /// uv_scale corrects for hardware texture padding, same as write_pass.
-    pub fn read_pass(&self, buffer_tex: GLuint, layer: f32, uv_scale: [f32; 2]) {
-        self.read.use_program();
-        unsafe {
-            gl::ActiveTexture(gl::TEXTURE0);
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, buffer_tex);
-            gl::Uniform1i(self.loc_read_buffer, 0);
-            gl::Uniform1f(self.loc_read_layer, layer);
-            gl::Uniform2f(self.loc_read_uv_scale, uv_scale[0], uv_scale[1]);
-        }
-        self.quad.draw();
-        unsafe {
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
-        }
-        self.read.unuse();
     }
 
     /// Passthrough: blit input_tex to host FBO scaled by passthrough level.
@@ -265,9 +237,9 @@ impl DelayShaders {
         self.fade.unuse();
     }
 
-    /// Receive: mix input with delayed buffer frame.
-    /// output = clamp(input + feedback * buffer[layer])
-    pub fn receive_pass(&self, input_tex: GLuint, buffer_tex: GLuint, layer: f32, feedback: f32, uv_scale: [f32; 2]) {
+    /// Receive: mix delayed buffer with live input via passthrough.
+    /// output = mix(delayed, live, passthrough) — 0=pure delayed, 1=bypass
+    pub fn receive_pass(&self, input_tex: GLuint, buffer_tex: GLuint, layer: f32, passthrough: f32, uv_scale: [f32; 2]) {
         self.receive.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
@@ -278,7 +250,7 @@ impl DelayShaders {
             gl::BindTexture(gl::TEXTURE_2D_ARRAY, buffer_tex);
             gl::Uniform1i(self.loc_rx_buffer, 1);
             gl::Uniform1f(self.loc_rx_layer, layer);
-            gl::Uniform1f(self.loc_rx_feedback, feedback);
+            gl::Uniform1f(self.loc_rx_passthrough, passthrough);
             gl::Uniform2f(self.loc_rx_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();

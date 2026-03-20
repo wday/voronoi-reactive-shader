@@ -3,16 +3,15 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 9;
+pub const NUM_PARAMS: usize = 8;
 pub const PARAM_MODE: usize = 0;
 pub const PARAM_CHANNEL: usize = 1;
 pub const PARAM_SYNC_MODE: usize = 2;
 pub const PARAM_SUBDIVISION: usize = 3;
 pub const PARAM_DELAY_MS: usize = 4;
 pub const PARAM_DELAY_FRAMES: usize = 5;
-pub const PARAM_FEEDBACK: usize = 6;
-pub const PARAM_PASSTHROUGH: usize = 7;
-pub const PARAM_DECAY: usize = 8;
+pub const PARAM_PASSTHROUGH: usize = 6;
+pub const PARAM_DECAY: usize = 7;
 
 /// Subdivision options: (label, beats)
 const SUBDIVISIONS: [(&str, f32); 7] = [
@@ -37,8 +36,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             default: Some(0.0), // Receive
             elements: Some(vec![
                 (CString::new("Receive").unwrap(), 0.0),
-                (CString::new("Send").unwrap(), 0.5),
-                (CString::new("Tap").unwrap(), 1.0),
+                (CString::new("Send").unwrap(), 1.0),
             ]),
             ..Default::default()
         },
@@ -99,21 +97,16 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             max: Some(MAX_DELAY_FRAMES as f32),
             ..Default::default()
         },
-        // 6: Feedback (Receive only)
-        SimpleParamInfo {
-            name: CString::new("Feedback").unwrap(),
-            param_type: ParameterTypes::Standard,
-            default: Some(0.5),
-            ..Default::default()
-        },
-        // 7: Passthrough (Send only — dry level, input passes through at this level, 0=black)
+        // 6: Passthrough — dry/wet mix of live input vs delayed buffer
+        //    Send: how much live input passes through to host output (0=black)
+        //    Receive: mix(delayed, live, passthrough) — 0=pure delayed, 1=bypass
         SimpleParamInfo {
             name: CString::new("Passthrough").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(0.0),
             ..Default::default()
         },
-        // 8: Decay (Send only — controls previous-iteration survival for overdub/IFS)
+        // 7: Decay (Send only — controls previous-iteration survival)
         SimpleParamInfo {
             name: CString::new("Decay").unwrap(),
             param_type: ParameterTypes::Standard,
@@ -131,7 +124,6 @@ pub fn param_info(index: usize) -> &'static dyn ParamInfo {
 pub enum Mode {
     Receive,
     Send,
-    Tap,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -155,8 +147,7 @@ impl DelayParams {
                 2.0 / 6.0, // Subdivision: 1/4
                 500.0,  // Delay Ms: 500ms (actual value)
                 30.0,   // Delay Frames: 30 (actual value)
-                0.5,    // Feedback
-                0.0,    // Zero Tap
+                0.0,    // Passthrough
                 0.0,    // Decay
             ],
         }
@@ -177,13 +168,10 @@ impl DelayParams {
     }
 
     pub fn mode(&self) -> Mode {
-        let v = self.values[PARAM_MODE];
-        if v < 0.33 {
+        if self.values[PARAM_MODE] < 0.5 {
             Mode::Receive
-        } else if v < 0.67 {
-            Mode::Send
         } else {
-            Mode::Tap
+            Mode::Send
         }
     }
 
@@ -216,10 +204,6 @@ impl DelayParams {
 
     pub fn delay_frames_raw(&self) -> u32 {
         self.values[PARAM_DELAY_FRAMES].round() as u32
-    }
-
-    pub fn feedback(&self) -> f32 {
-        self.values[PARAM_FEEDBACK]
     }
 
     pub fn passthrough(&self) -> f32 {
