@@ -15,8 +15,10 @@ FFGL plugin suite for Resolume — real-time fragment shaders for live visual pe
 | **Delay Line** | Rust | Video delay with send/receive feedback routing, tap sync |
 | **Video Looper** | Rust | Frame buffer delay with PBO async transfers, decay blend |
 | **Dream LTM** | Rust | Tiered temporal pyramid — 4 tiers, zero CPU, recency-weighted composite |
+| **Flow Inject** | ISF | Scene-to-flow-field converter — velocity, density, edge injection |
+| **Flow Euler** | ISF | Eulerian fluid sim with semi-Lagrangian advection, vorticity confinement |
 
-All Rust plugins build as Windows DLLs via FFGL. See `plugins.json` for the registry.
+All Rust plugins build as Windows DLLs via FFGL. See [PLUGINS.md](PLUGINS.md) for full parameter reference and `plugins.json` for the registry.
 
 ## Build
 

@@ -60,10 +60,15 @@ Three layers for clean dry/wet separation:
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| **Mode** | Receive / Send | Switches plugin behavior |
-| **Channel** | 1 / 2 / 3 / 4 | Pairs Send with Receive instances |
-| **Subdivision** | 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Musical delay length (BPM from host) |
-| **Feedback** | 0.0 – 1.0 | Echo intensity (Receive only) |
+| **Mode** | Receive / Send / Tap | Receive: mix delayed frame in. Send: write to buffer. Tap: read-only (no feedback) |
+| **Channel** | 1 / 2 | Independent buffer channel — pair a Send with a Receive on the same channel |
+| **Sync Mode** | Subdivision / Ms / Frames | Timing source for delay length |
+| **Subdivision** | 1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars | Musical delay length at host BPM (when Sync Mode = Subdivision) |
+| **Delay Ms** | 1–4000 ms | Millisecond delay (when Sync Mode = Ms) |
+| **Delay Frames** | 1–239 | Frame count delay (when Sync Mode = Frames) |
+| **Feedback** | 0.0–1.0 | Echo intensity (Receive mode only) |
+| **Zero Tap** | 0.0–1.0 | Direct/dry tap (Send mode only) |
+| **Decay** | 0.0–1.0 | Previous-iteration survival — overdub/IFS accumulation |
 
 ## Multi-tap delay
 
