@@ -140,15 +140,14 @@ pub struct DelayShaders {
     loc_write_uv_scale: GLint,
     loc_read_buffer: GLint,
     loc_read_layer: GLint,
+    loc_read_uv_scale: GLint,
     loc_rx_input: GLint,
     loc_rx_buffer: GLint,
     loc_rx_layer: GLint,
     loc_rx_feedback: GLint,
     loc_rx_uv_scale: GLint,
     loc_so_input: GLint,
-    loc_so_buffer: GLint,
-    loc_so_layer: GLint,
-    loc_so_zero_tap: GLint,
+    loc_so_passthrough: GLint,
     loc_so_uv_scale: GLint,
     loc_fade_buffer: GLint,
     loc_fade_layer: GLint,
@@ -171,15 +170,14 @@ impl DelayShaders {
         let loc_write_uv_scale = write.uniform_loc("u_uv_scale");
         let loc_read_buffer = read.uniform_loc("u_buffer");
         let loc_read_layer = read.uniform_loc("u_layer");
+        let loc_read_uv_scale = read.uniform_loc("u_uv_scale");
         let loc_rx_input = receive.uniform_loc("u_input");
         let loc_rx_buffer = receive.uniform_loc("u_buffer");
         let loc_rx_layer = receive.uniform_loc("u_layer");
         let loc_rx_feedback = receive.uniform_loc("u_feedback");
         let loc_rx_uv_scale = receive.uniform_loc("u_uv_scale");
         let loc_so_input = send_output.uniform_loc("u_input");
-        let loc_so_buffer = send_output.uniform_loc("u_buffer");
-        let loc_so_layer = send_output.uniform_loc("u_layer");
-        let loc_so_zero_tap = send_output.uniform_loc("u_zero_tap");
+        let loc_so_passthrough = send_output.uniform_loc("u_passthrough");
         let loc_so_uv_scale = send_output.uniform_loc("u_uv_scale");
         let loc_fade_buffer = fade.uniform_loc("u_buffer");
         let loc_fade_layer = fade.uniform_loc("u_layer");
@@ -188,9 +186,9 @@ impl DelayShaders {
         Self {
             write, read, receive, send_output, fade,
             loc_write_input, loc_write_uv_scale,
-            loc_read_buffer, loc_read_layer,
+            loc_read_buffer, loc_read_layer, loc_read_uv_scale,
             loc_rx_input, loc_rx_buffer, loc_rx_layer, loc_rx_feedback, loc_rx_uv_scale,
-            loc_so_input, loc_so_buffer, loc_so_layer, loc_so_zero_tap, loc_so_uv_scale,
+            loc_so_input, loc_so_passthrough, loc_so_uv_scale,
             loc_fade_buffer, loc_fade_layer, loc_fade_decay,
             quad,
         }
@@ -214,14 +212,15 @@ impl DelayShaders {
     }
 
     /// Read: output a specific layer from the buffer (wet-only, no mixing).
-    /// Used by Send for delayed output.
-    pub fn read_pass(&self, buffer_tex: GLuint, layer: f32) {
+    /// uv_scale corrects for hardware texture padding, same as write_pass.
+    pub fn read_pass(&self, buffer_tex: GLuint, layer: f32, uv_scale: [f32; 2]) {
         self.read.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D_ARRAY, buffer_tex);
             gl::Uniform1i(self.loc_read_buffer, 0);
             gl::Uniform1f(self.loc_read_layer, layer);
+            gl::Uniform2f(self.loc_read_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {
@@ -230,27 +229,19 @@ impl DelayShaders {
         self.read.unuse();
     }
 
-    /// Send output: crossfade between delayed and live input.
-    /// output = mix(delayed, live, zero_tap)
-    pub fn send_output_pass(&self, input_tex: GLuint, buffer_tex: GLuint, layer: f32, zero_tap: f32, uv_scale: [f32; 2]) {
+    /// Passthrough: blit input_tex to host FBO scaled by passthrough level.
+    /// passthrough=0 → black, passthrough=1 → full input. No buffer read.
+    pub fn passthrough_pass(&self, input_tex: GLuint, passthrough: f32, uv_scale: [f32; 2]) {
         self.send_output.use_program();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
             gl::Uniform1i(self.loc_so_input, 0);
-
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, buffer_tex);
-            gl::Uniform1i(self.loc_so_buffer, 1);
-            gl::Uniform1f(self.loc_so_layer, layer);
-            gl::Uniform1f(self.loc_so_zero_tap, zero_tap);
+            gl::Uniform1f(self.loc_so_passthrough, passthrough);
             gl::Uniform2f(self.loc_so_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {
-            gl::ActiveTexture(gl::TEXTURE1);
-            gl::BindTexture(gl::TEXTURE_2D_ARRAY, 0);
-            gl::ActiveTexture(gl::TEXTURE0);
             gl::BindTexture(gl::TEXTURE_2D, 0);
         }
         self.send_output.unuse();

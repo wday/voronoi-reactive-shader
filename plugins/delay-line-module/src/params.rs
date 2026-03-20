@@ -11,7 +11,7 @@ pub const PARAM_SUBDIVISION: usize = 3;
 pub const PARAM_DELAY_MS: usize = 4;
 pub const PARAM_DELAY_FRAMES: usize = 5;
 pub const PARAM_FEEDBACK: usize = 6;
-pub const PARAM_ZERO_TAP: usize = 7;
+pub const PARAM_PASSTHROUGH: usize = 7;
 pub const PARAM_DECAY: usize = 8;
 
 /// Subdivision options: (label, beats)
@@ -106,9 +106,9 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             default: Some(0.5),
             ..Default::default()
         },
-        // 7: Zero Tap (Send only)
+        // 7: Passthrough (Send only — dry level, input passes through at this level, 0=black)
         SimpleParamInfo {
-            name: CString::new("Zero Tap").unwrap(),
+            name: CString::new("Passthrough").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(0.0),
             ..Default::default()
@@ -222,8 +222,8 @@ impl DelayParams {
         self.values[PARAM_FEEDBACK]
     }
 
-    pub fn zero_tap(&self) -> f32 {
-        self.values[PARAM_ZERO_TAP]
+    pub fn passthrough(&self) -> f32 {
+        self.values[PARAM_PASSTHROUGH]
     }
 
     pub fn decay(&self) -> f32 {
