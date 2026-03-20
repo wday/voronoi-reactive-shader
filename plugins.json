@@ -44,6 +44,12 @@
       "dll": "channel_displace.dll"
     },
     {
+      "name": "slew_limiter",
+      "type": "rust",
+      "crate": "slew-limiter",
+      "dll": "slew_limiter.dll"
+    },
+    {
       "name": "stereo_depth",
       "display_name": "Stereo Depth",
       "type": "isf",

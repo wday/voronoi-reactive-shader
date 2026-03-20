@@ -115,11 +115,13 @@ impl DelayLine {
             gl::Viewport(0, 0, width as i32, height as i32);
         }
 
-        // frame[write_pos] = decay * frame[write_pos] + input
+        // frame[write_pos] = decay * frame[write_pos] + (1 - decay) * input
         shaders.fade_pass(buf_tex, write_layer, decay);
         unsafe {
             gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::ONE, gl::ONE);
+            let s = 1.0 - decay;
+            gl::BlendColor(s, s, s, s);
+            gl::BlendFunc(gl::CONSTANT_COLOR, gl::ONE);
         }
         shaders.write_pass(input_tex, uv_scale);
         unsafe {
