@@ -4,3 +4,6 @@
 [submodule "vendor/spout2"]
 	path = vendor/spout2
 	url = https://github.com/leadedge/Spout2.git
+[submodule "vendor/ffgl"]
+	path = vendor/ffgl
+	url = https://github.com/resolume/ffgl.git

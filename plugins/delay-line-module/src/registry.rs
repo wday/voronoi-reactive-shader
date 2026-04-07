@@ -27,10 +27,11 @@ pub fn buffer_depth() -> u32 {
     BUFFER_DEPTH
 }
 
-/// Get buffer info for reading. Returns (texture_array, write_pos, loop_length, width, height) or None.
+/// Get buffer info for reading. Returns (texture_array, write_pos, buf_size, width, height) or None.
+/// buf_size = loop_length + 1; Read computes read_pos = (write_pos + 1) % buf_size.
 pub fn read_channel(channel: usize) -> Option<(GLuint, u32, u32, u32, u32)> {
     let reg = REGISTRY.lock().unwrap();
-    reg[channel].as_ref().map(|b| (b.texture_array, b.write_pos, b.loop_length, b.width, b.height))
+    reg[channel].as_ref().map(|b| (b.texture_array, b.write_pos, b.loop_length + 1, b.width, b.height))
 }
 
 /// Begin a frame write for the given channel. Returns (tex, fbo, write_pos).
@@ -67,12 +68,13 @@ pub fn begin_frame_write(channel: usize, loop_length: u32, width: u32, height: u
     }
 
     let b = reg[channel].as_mut().unwrap();
-    let ll = loop_length.clamp(1, BUFFER_DEPTH);
+    let ll = loop_length.clamp(1, BUFFER_DEPTH - 1); // -1 to leave room for +1 stitch slot
     b.loop_length = ll;
+    let buf_size = ll + 1; // extra slot so read and write never alias
 
     let now = Instant::now();
     if now.duration_since(b.last_advance_time) > FRAME_THRESHOLD {
-        b.write_pos = (b.write_pos + 1) % ll;
+        b.write_pos = (b.write_pos + 1) % buf_size;
         b.last_advance_time = now;
     }
 

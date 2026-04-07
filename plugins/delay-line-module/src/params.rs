@@ -3,15 +3,14 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 8;
+pub const NUM_PARAMS: usize = 7;
 pub const PARAM_MODE: usize = 0;
 pub const PARAM_CHANNEL: usize = 1;
 pub const PARAM_SYNC_MODE: usize = 2;
 pub const PARAM_SUBDIVISION: usize = 3;
 pub const PARAM_DELAY_MS: usize = 4;
 pub const PARAM_DELAY_FRAMES: usize = 5;
-pub const PARAM_PASSTHROUGH: usize = 6;
-pub const PARAM_DECAY: usize = 7;
+pub const PARAM_DECAY: usize = 6;
 
 /// Subdivision options: (label, beats)
 const SUBDIVISIONS: [(&str, f32); 7] = [
@@ -33,10 +32,10 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
         SimpleParamInfo {
             name: CString::new("Mode").unwrap(),
             param_type: ParameterTypes::Option,
-            default: Some(0.0), // Receive
+            default: Some(0.0), // Read
             elements: Some(vec![
-                (CString::new("Receive").unwrap(), 0.0),
-                (CString::new("Send").unwrap(), 1.0),
+                (CString::new("Read").unwrap(), 0.0),
+                (CString::new("Write").unwrap(), 1.0),
             ]),
             ..Default::default()
         },
@@ -97,16 +96,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             max: Some(MAX_DELAY_FRAMES as f32),
             ..Default::default()
         },
-        // 6: Passthrough — dry/wet mix of live input vs delayed buffer
-        //    Send: how much live input passes through to host output (0=black)
-        //    Receive: mix(delayed, live, passthrough) — 0=pure delayed, 1=bypass
-        SimpleParamInfo {
-            name: CString::new("Passthrough").unwrap(),
-            param_type: ParameterTypes::Standard,
-            default: Some(0.0),
-            ..Default::default()
-        },
-        // 7: Decay (Send only — controls previous-iteration survival)
+        // 6: Decay (Write only — controls previous-iteration survival)
         SimpleParamInfo {
             name: CString::new("Decay").unwrap(),
             param_type: ParameterTypes::Standard,
@@ -122,8 +112,8 @@ pub fn param_info(index: usize) -> &'static dyn ParamInfo {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
-    Receive,
-    Send,
+    Read,
+    Write,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -141,13 +131,12 @@ impl DelayParams {
     pub fn new() -> Self {
         Self {
             values: [
-                0.0,    // Mode: Receive
+                0.0,    // Mode: Read
                 0.0,    // Channel: 1
                 0.0,    // Sync Mode: Subdivision
                 2.0 / 6.0, // Subdivision: 1/4
                 500.0,  // Delay Ms: 500ms (actual value)
                 30.0,   // Delay Frames: 30 (actual value)
-                0.0,    // Passthrough
                 0.0,    // Decay
             ],
         }
@@ -169,9 +158,9 @@ impl DelayParams {
 
     pub fn mode(&self) -> Mode {
         if self.values[PARAM_MODE] < 0.5 {
-            Mode::Receive
+            Mode::Read
         } else {
-            Mode::Send
+            Mode::Write
         }
     }
 
@@ -206,11 +195,9 @@ impl DelayParams {
         self.values[PARAM_DELAY_FRAMES].round() as u32
     }
 
-    pub fn passthrough(&self) -> f32 {
-        self.values[PARAM_PASSTHROUGH]
-    }
-
     pub fn decay(&self) -> f32 {
-        self.values[PARAM_DECAY]
+        // Fourth-root curve: spreads the useful dub-echo range (0.90–0.99)
+        // across most of the knob instead of cramming it into the last 10%.
+        self.values[PARAM_DECAY].powf(0.25)
     }
 }
