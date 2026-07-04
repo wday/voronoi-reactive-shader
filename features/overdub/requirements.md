@@ -1,10 +1,14 @@
 # Delay-Line Overdub for IFS Accumulation
 
-> **Status (2026-07-04): SUPERSEDED by `features/delay-module-v2/`.** The
-> decay + additive-accumulation goal is absorbed into the v2 Read/Write
-> model — decay lives on Write, additive accumulation happens via Resolume
-> blend modes on Read. This doc is retained as the **IFS attractor
-> validation composition** for v2, not as a standalone implementation.
+> **Status (2026-07-04): OPEN.** The delay line already ships the Read/Write
+> model (commit `a39693f`) with a **decay crossfade** on Write
+> (`decay*old + (1-decay)*input`). What is NOT built is this feature's core
+> mechanism: **additive** accumulation (`GL_BLEND(ONE,ONE)`, `is_first`
+> multi-Write) so several contractive-map Writes sum into one buffer slot per
+> subdivision to form IFS attractors. Open design question below: whether that
+> additive path lives plugin-side or is done entirely via Resolume blend modes
+> on Read. The plan.md steps that assume the old Send/Receive model need
+> re-basing onto the shipped Read/Write code before implementing.
 
 ## Problem
 
