@@ -1,0 +1,13 @@
+[project]
+name = "avc-query"
+version = "0.1.0"
+description = "Query tool for Resolume .avc composition files"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+avc = "avc_query.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
