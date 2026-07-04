@@ -130,4 +130,8 @@ jobs:
           for f in release-windows/*.dll; do [ -f "$f" ] && FILES+=("$f"); done
           for f in release-macos/*-macos.zip; do [ -f "$f" ] && FILES+=("$f"); done
 
+          # Create the release from the tag annotation if it doesn't exist yet,
+          # so a plain `git push` of a tag produces a complete release with no
+          # manual pre-creation step. Idempotent: no-op when it already exists.
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes-from-tag
           gh release upload "$TAG" "${FILES[@]}" --clobber
