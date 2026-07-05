@@ -3,15 +3,14 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 8;
+pub const NUM_PARAMS: usize = 7;
 pub const PARAM_CHANNEL: usize = 0;
 pub const PARAM_SYNC_MODE: usize = 1;
 pub const PARAM_SUBDIVISION: usize = 2;
 pub const PARAM_DELAY_MS: usize = 3;
 pub const PARAM_DELAY_FRAMES: usize = 4;
-pub const PARAM_THRU_PLAYBACK: usize = 5;
-pub const PARAM_REGEN: usize = 6;
-pub const PARAM_BLEND: usize = 7;
+pub const PARAM_REGEN: usize = 5;
+pub const PARAM_SEND: usize = 6;
 
 /// Subdivision options: (label, beats).
 const SUBDIVISIONS: [(&str, f32); 7] = [
@@ -29,7 +28,7 @@ const MAX_DELAY_FRAMES: u32 = 239;
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [
-        // 0: Channel
+        // 0: Channel — the patch point. Tap + Write on the same Channel form a loop.
         SimpleParamInfo {
             name: CString::new("Channel").unwrap(),
             param_type: ParameterTypes::Option,
@@ -40,7 +39,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ]),
             ..Default::default()
         },
-        // 1: Sync Mode
+        // 1: Sync Mode — how Time (tape length) is specified.
         SimpleParamInfo {
             name: CString::new("Sync Mode").unwrap(),
             param_type: ParameterTypes::Option,
@@ -84,30 +83,21 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             max: Some(MAX_DELAY_FRAMES as f32),
             ..Default::default()
         },
-        // 5: Thru↔Playback (output dry/wet: dry = live thru, wet = delayed playback)
-        SimpleParamInfo {
-            name: CString::new("Thru-Playback").unwrap(),
-            param_type: ParameterTypes::Standard,
-            default: Some(0.5),
-            ..Default::default()
-        },
-        // 6: Regen (feedback written back into the buffer; fourth-root curve)
+        // 5: Regen — decay rate of the loop-old content at the write slot (the
+        //    ring-out tail). Fourth-root curve puts the useful 0.90–0.99 range
+        //    across most of the knob. 0 = clean slate each lap; 1 = infinite hold.
         SimpleParamInfo {
             name: CString::new("Regen").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(0.0),
             ..Default::default()
         },
-        // 7: Blend (Crossfade / Replace / Additive)
+        // 6: Send — dub throw: how hard the current frame commits into the loop.
+        //    Modulate this (hold Tap Wet high) to pulse video echoes.
         SimpleParamInfo {
-            name: CString::new("Blend").unwrap(),
-            param_type: ParameterTypes::Option,
-            default: Some(0.0),
-            elements: Some(vec![
-                (CString::new("Crossfade").unwrap(), 0.0),
-                (CString::new("Replace").unwrap(), 0.5),
-                (CString::new("Additive").unwrap(), 1.0),
-            ]),
+            name: CString::new("Send").unwrap(),
+            param_type: ParameterTypes::Standard,
+            default: Some(1.0),
             ..Default::default()
         },
     ]
@@ -124,13 +114,6 @@ pub enum SyncMode {
     Frames,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum Blend {
-    Crossfade,
-    Replace,
-    Additive,
-}
-
 pub struct WriteParams {
     values: [f32; NUM_PARAMS],
 }
@@ -144,9 +127,8 @@ impl WriteParams {
                 2.0 / 6.0, // Subdivision: 1/4
                 500.0,     // Delay Ms
                 30.0,      // Delay Frames
-                0.5,       // Thru-Playback
                 0.0,       // Regen
-                0.0,       // Blend: Crossfade
+                1.0,       // Send
             ],
         }
     }
@@ -195,24 +177,15 @@ impl WriteParams {
         self.values[PARAM_DELAY_FRAMES].round() as u32
     }
 
-    pub fn thru_playback(&self) -> f32 {
-        self.values[PARAM_THRU_PLAYBACK]
-    }
-
-    /// Feedback amount. Fourth-root curve spreads the useful dub range
-    /// (0.90–0.99) across most of the knob instead of the last 10%.
+    /// Decay rate of the loop-old content at the write slot. Fourth-root curve
+    /// spreads the useful dub range (0.90–0.99) across most of the knob.
     pub fn regen(&self) -> f32 {
         self.values[PARAM_REGEN].powf(0.25)
     }
 
-    pub fn blend(&self) -> Blend {
-        let v = self.values[PARAM_BLEND];
-        if v < 0.33 {
-            Blend::Crossfade
-        } else if v < 0.67 {
-            Blend::Replace
-        } else {
-            Blend::Additive
-        }
+    /// Dub throw — how much of the current frame commits into the loop. Linear
+    /// so it automates predictably when pulsed.
+    pub fn send(&self) -> f32 {
+        self.values[PARAM_SEND]
     }
 }

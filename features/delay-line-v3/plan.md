@@ -1,117 +1,70 @@
 # Delay Line v3 — Implementation Plan
 
-Sequenced to de-risk: prove cross-DLL buffer sharing and the frame barrier
-first, then build the two plugin surfaces, then layer generative depth. Each
-stage is independently testable in Resolume (or the harness where possible).
+Sequenced to de-risk cross-DLL sharing first, then build the two atoms, then
+(only if wanted) layer refinements. Stages 0–3 are built; the model was then
+**refined down** (see devlog 2026-07-05) to the two-atom / five-knob engine in
+`requirements.md`. Everything past the refinement is fast-follow, not required.
 
-## Stage 0 — Prove cross-DLL buffer sharing (spike, throwaway UI)
+## Stage 0 — Cross-DLL buffer sharing — DONE
 
-The whole split hinges on two DLLs sharing one ring buffer. Build the minimum to
-confirm it before investing in params.
+Proved two plugin DLLs share one `delay_core` registry + barrier, on the Windows
+loader (the primary platform). Core-lib approach (C-ABI cdylib, runtime-loaded by
+pluglib from the plugin's own directory). See devlog.
 
-- Extract the registry (`registry.rs`) into a shared component with a **stable C
-  ABI**: `begin_frame_write`, `read_channel`, `acquire`, `release`,
-  `buffer_depth`, plus the new barrier/accumulation entry points.
-- **Mechanism decision (make here, with a spike):**
-  - **Core lib** (reviewer's pick): `delay-core` as a `cdylib` with C ABI; both
-    plugin crates call it via FFI. Single owner of the registry + barrier — one
-    static, one lock, deterministic. Cost: ship `delay_core.{dll,dylib}` and make
-    the plugin DLLs find it (Windows: `AddDllDirectory`/place next to host;
-    macOS: `@loader_path` rpath).
-  - **OS shared memory**: named segment holds the tiny registry table; GL handles
-    are process-global so they cross the boundary. No extra artifact to locate,
-    but needs a process-shared lock/atomics and stale-segment cleanup across
-    Resolume restarts.
-  - Deciding criterion: deterministic multi-Write-per-frame accumulation (Stage
-    3). Lean core-lib unless deployment/load-path proves worse than shm cleanup.
-- **Spike test:** trivial two-plugin build — DLL A writes a test pattern, DLL B
-  reads it back on another layer. Confirm B sees A's buffer in Resolume. Confirm
-  clean teardown (remove effects, no leaked textures / stale segment).
-- Exit criterion: sharing works and tears down cleanly. Only then proceed.
+## Stage 1 — Frame barrier — DONE
 
-## Stage 1 — Frame barrier (replaces 2ms wall-clock)
+Per-frame advance keyed off `FFGLData.host_time` (whole ms). Single writer per
+channel → the barrier just guarantees one advance per frame. (Multi-writer
+determinism is only needed for the deferred additive-IFS refinement.)
 
-- Identify the host per-frame signal in `FFGLData` (host time / frame index —
-  verify what ffgl-core exposes; extend if needed).
-- Registry tracks per channel: current frame id, first-writer-seen flag, the
-  frame's source read slot. First writer in a frame advances write_pos + owns the
-  fade/clear; subsequent writers in the same frame accumulate against the *same*
-  source slot.
-- Test: two Write instances on one channel, confirm exactly one advance/frame and
-  stable ordering (Resolume bottom-to-top layer order).
+## Stage 2 — Two plugin skeletons — DONE
 
-## Stage 2 — Two plugin skeletons with behavior-named controls
+`plugins/delay-write` (`DlyW`) + `plugins/delay-tap` (`DlyT`) on the shared core,
+plus `pluglib` (loader + GL helpers). Deploy-ready.
 
-Split into `plugins/delay-write` and `plugins/delay-tap` (two crates, two
-16-byte names, two 4-byte ids; provisional `DlyW` / `DlyT`). Both depend on the
-shared registry from Stage 0.
+## Stage 3 → Refinement — the two-atom model (this pass) — DONE (build)
 
-- **Delay Write** params: Time (sync mode + value), Thru↔Playback, Regen, Blend
-  mode, Channel. Output = `mix(live_thru, oldest_delayed, thru_playback)`; write
-  applies Regen via the selected blend mode. Reuse the read/output pass for the
-  playback fetch.
-- **Delay Tap** params: Tap Offset, Multi-tap, Buffer Mix, Channel. Output =
-  `mix(node_input, buffer_at_offset, buffer_mix)`. Tap must sample its own input
-  (today's Read ignores it).
-- Defaults: a single Delay Write with sensible Time/Thru↔Playback is a usable
-  echo out of the box; Regen 0, Blend = Crossfade.
-- Test: single Write = echo; Tap→FX→Write = feedback loop with FX insert.
+Collapsed the over-built control surface to the five-knob engine:
 
-## Stage 3 — Additive accumulation (absorbs overdub)
+- **Write**: dropped Thru↔Playback + the Blend-mode selector; added **Send**. One
+  record path: `tape[slot] = Regen·old + Send·input` (fade pre-pass scales the
+  slot by Regen, additive `CONSTANT_COLOR=Send, dst=ONE` write adds Send·input).
+  Output is now a pure passthrough of the input.
+- **Tap**: dropped Tap Offset + Multi-tap + Buffer Mix; added **Dry** + **Wet**.
+  Fixed full-delay read (oldest slot, one lap back); output
+  `clamp(Dry·source + Wet·tape)` — two gains, not a crossfade.
+- **Shared output shader**: generalized `mix(live,buf,wet)` → `clamp(dry·live +
+  wet·buf)`; `OutputProgram::draw` gains a `dry` arg. Write passthrough = dry 1,
+  wet 0.
+- Deleted the barrier-driven multi-writer additive path from the Write.
+- Builds clean on the Windows MSVC toolchain.
 
-- Implement Blend mode = **Additive** on Write: first writer fades/clears
-  (`decay`), subsequent writers add (`GL_ONE, GL_ONE`), all reading the frame's
-  shared source slot (from Stage 1 barrier).
-- Validation composition: the Sierpinski/IFS recipe from `features/overdub/` —
-  N Writes (each behind a contractive transform) + one Tap output. Confirm an
-  attractor forms and is stable across generations.
-- This is the deciding test for the Stage 0 mechanism choice.
+**Next (not code): live Resolume validation** of the refined model — see the
+smoke-test checklist in the devlog. This is the gate before any fast-follow.
 
-## Stage 4 — Sweepable time
+## Fast-follow (deferred — bolt onto the working atoms)
 
-- Add a **free/continuous** time mode alongside beat-sync: bypass latching,
-  interpolate loop length smoothly on change so sweeps glide (no stepping).
-- Keep beat-sync (subdivision/ms/frames) as selectable modes.
-- Test: sweep Time live, confirm smooth pitch/smear/zoom-rush with no audible
-  stepping or black frames.
+Each is independent; do only if the atoms prove out live and the look calls for
+it. Order is by likely value, not commitment.
 
-## Stage 5 — Variable + multi-tap
+- **F1 — Variable + multi-tap** (Tap): Tap Offset 0…loop, then K taps combined.
+- **F2 — Sweepable/continuous Time** (Write): free mode alongside beat-sync,
+  interpolated so time sweeps glide.
+- **F3 — Over-unity float + precision budget**: RGBA16F so Send/Regen can persist
+  >1.0 (controlled bloom), tone-map at output; Crisp↔Deep macro (precision +
+  resolution-scale at ~constant VRAM). RGB10_A2 as free anti-banding.
+- **F4 — Raw palette**: wrap (clamp/repeat/mirror), filter (nearest/linear),
+  no-clear-on-realloc.
+- **F5 — Additive multi-writer IFS**: N Writes summing into one slot via the
+  deterministic barrier (contractive transforms → attractors). Absorbs the old
+  overdub feature. The heaviest item; needs the multi-writer determinism the core
+  already proved but this model doesn't yet exercise.
+- **F6 — Channel count 4–8**: bump `NUM_CHANNELS` (+ REGISTRY literal); VRAM-heavy.
 
-- Delay Tap: Tap Offset 0…loop_length; Multi-tap = read K offsets and combine
-  (sum/screen, or K instanced reads). Cheap — sampler reads at chosen layers.
-- Test: multi-tap echo cloud from one Write loop; several offsets with distinct
-  transforms on separate layers.
+## Stage 7 — Docs, deploy, migration (when releasing)
 
-## Stage 6 — Raw palette + precision/resolution budget
-
-- Expose per-channel: texture **wrap** (clamp/repeat/mirror), **filter**
-  (nearest/linear), **no-clear-on-realloc**.
-- **Buffer: Crisp↔Deep** macro: precision (RGBA8 / RGB10_A2 / RGBA16F) +
-  resolution-scale, auto-balanced to hold VRAM ~constant. Advanced path exposes
-  precision, res-scale, filter independently.
-- Decouple buffer resolution from input resolution: allocate at scaled dims,
-  render Write at buffer-res (viewport = buffer dims), read/output upsamples via
-  the sampler.
-- **Over-unity:** with RGBA16F, allow Regen > 1.0 to persist in the buffer
-  (controlled runaway); tone-map/clamp only at output. 8-bit/RGB10_A2 clamp.
-- Test: long-running feedback shows no 8-bit banding at Deep; over-unity bloom
-  accumulates without clipping; wrap/filter visibly change the palette.
-
-## Stage 7 — Docs, deploy, migration
-
-- Rewrite `docs/delay-line-manual.md` for the two-plugin model (supersedes the
-  v2 Read/Write manual). Reason from principles; no artist names.
-- Update `PLUGINS.md`, `plugins.json`, build scripts for the new crates + the
-  shared core lib (ensure CI/release build and package `delay-core` and set its
-  load path on both platforms).
-- Release notes: migration — existing `DLMd` compositions must be rebuilt.
-- `make build` / `make deploy` verified for both plugins + core lib.
-
-## Open implementation questions (resolve in devlog as encountered)
-
-- Exact `FFGLData` per-frame signal (Stage 1) — confirm availability.
-- Core-lib load-path ergonomics vs. shm cleanup (Stage 0) — pick with the spike.
-- Multi-tap combine semantics (sum vs. screen vs. per-tap weight) — pick in
-  Stage 5 from feel.
-- Whether Regen and Thru↔Playback interact in a way that needs a third control
-  for the FX-loop (Write terminal) case — watch during Stage 2/3.
+- Rewrite `docs/delay-line-manual.md` for the two-atom model (principles, no
+  artist names).
+- `PLUGINS.md`, `plugins.json`, CI/release: build + co-locate `delay_core.dll`
+  beside both plugin DLLs; verify load path on both platforms.
+- Release notes: migration — existing `DLMd` compositions rebuild onto Tap+Write.

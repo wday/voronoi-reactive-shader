@@ -201,3 +201,71 @@ Built the real skeleton. Four new workspace crates under `plugins/`:
 5. **Teardown**: add/remove effects repeatedly — no crash (textures leak until
    Resolume exits, by design). Confirm Resolume ignores `delay_core.dll` (no FFGL
    entry point) gracefully during its plugin scan.
+
+## 2026-07-05 — Refinement: collapse to two atoms + five knobs
+
+Clean-session requirements refinement (the Stage-3 build worked mechanically but
+was undescribable). Worked the model down conversationally to the **minimum
+*playable* controls** — the atoms of a modular feedback engine — and refactored
+the code to match. `requirements.md` + `plan.md` rewritten.
+
+### The insight that unlocked it
+**Every single blend knob is a crossfade, so it always couples "how much source
+enters" with "how much loop sustains."** Thru↔Playback, Buffer Mix, Regen-as-mix
+— the same crossfade wearing different hats, which is why they all felt
+equivalent-or-still-broken. The only fix is *two independent gains*. So: expose
+two gains, name each by behavior, one per node; defer everything else.
+
+### The tape-loop mental model (user's framing, adopted verbatim)
+- **Write = record head.** Pushes the current frame onto the tape, advances one
+  slot, controls tape length (Time). Output is a **passthrough** of its input —
+  you see the write-head input at all times; it's a visually transparent recorder.
+  A Write with no Tap records into the aether.
+- **Tap = read head**, placed just before the write head. Reads the frame one full
+  lap back (the slot about to be overwritten) and carries it forward with the live
+  source.
+
+### The opacity crux — resolved, not worked around
+Long thread on where the dry source reaches the FX stack if the Tap is first at
+100% opacity. Resolution: **keep every effect at 100% opacity and do all mixing
+in-shader.** At 100% the host crossfade (uncertain for FFGL anyway) is a no-op:
+Write passes its input through, and the **Tap samples its own input** so the
+source is already in its output (Dry is its gain). We never depend on host
+opacity — which was exactly the old Read plugin's fragility (it ignored its input
+and leaned on opacity to reintroduce the source). This also kills the seeding
+chicken-and-egg.
+
+### Final control surface
+- **Write** `{Channel, Time (Sync Mode + value), Regen, Send}` —
+  `tape[slot] = Regen·old + Send·input`, output = passthrough.
+  Regen = decay/ring-out tail; Send = dub throw (pulse it).
+- **Tap** `{Channel, Dry, Wet}` — `out = clamp(Dry·source + Wet·tape[full-delay])`,
+  two gains not a crossfade. Dry = source into FX; Wet = feedback re-processed by FX.
+- **Dub gesture**: hold Wet high, set Regen for the tail, pulse Send. Send→0 rings
+  out at the Regen rate instead of cutting to black — why both Wet (morphing
+  feedback) and Regen (raw persistence) both earn a place.
+
+### Refactor (built clean, Windows MSVC)
+- `pluglib` output shader: `mix(live,buf,wet)` → `clamp(dry·live + wet·buf)`;
+  `OutputProgram::draw` gains a `dry` arg. Write passthrough = dry 1, wet 0.
+- `delay-write`: dropped Thru↔Playback + Blend selector, added **Send**; single
+  record path (fade pre-pass scales slot by Regen, additive `CONSTANT_COLOR=Send,
+  dst=ONE` write adds Send·input); output now passthrough. **Deleted** the
+  barrier-driven multi-writer additive path. 8→7 params.
+- `delay-tap`: dropped Tap Offset + Multi-tap + Buffer Mix, added **Dry** + **Wet**;
+  fixed full-delay read (oldest slot). 4→3 params.
+- `delay-core`: **unchanged** (C ABI untouched); cargo correctly skipped it.
+- Timing note: single writer per channel makes the additive-with-decay a trivial
+  read-modify-write of `tape[wp]` (fade in-place then blend), no multi-writer
+  barrier. The Tap, being upstream of the Write in the stack, reads slot `(wp+1)` =
+  the pre-overwrite content one lap back; the Write then overwrites that slot.
+
+### Deferred to fast-follow (not atoms)
+Variable/multi-tap, sweepable time, over-unity float + Crisp↔Deep precision,
+raw palette, additive multi-writer IFS (absorbs overdub — the heaviest, needs the
+determinism this model doesn't exercise), channel count 4–8.
+
+### Next
+Live Resolume validation of the refined model (smoke-test checklist above, now:
+Write output should be transparent passthrough; the Tap is what shows the loop).
+This is the gate before any fast-follow. Deploy all three DLLs together.

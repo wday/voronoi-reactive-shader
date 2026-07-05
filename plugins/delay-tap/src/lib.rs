@@ -1,9 +1,16 @@
-//! Delay Tap (`DlyT`) — the reader half of the v3 delay line.
+//! Delay Tap (`DlyT`) — the read head of the v3 delay line.
 //!
-//! Reads a shared ring-buffer channel (delay-core, via pluglib) at a variable
-//! offset and blends it against its own input (Buffer Mix). Read-only: used to
-//! build `Tap → FX → Write` feedback loops with an FX insert. Multi-tap is
-//! reserved for Stage 5; this skeleton reads a single tap.
+//! Reads a shared ring-buffer channel (delay-core, via pluglib) at a fixed full
+//! delay (one lap back — the slot the Write is about to overwrite) and carries
+//! it forward alongside the live source with two independent gains:
+//!
+//!     out = clamp(Dry * source  +  Wet * tape[full-delay])
+//!
+//! Two gains, not a crossfade, so source-injection (**Dry**) and loop feedback
+//! (**Wet**) are decoupled. The Tap sits first in a `source → Tap → FX → Write`
+//! stack; because it samples its own input, the source survives at 100% effect
+//! opacity (the host does no mixing) — Dry is the source's path into the FX. Read
+//! -only: it never touches the tape.
 
 mod params;
 
@@ -37,14 +44,13 @@ impl DelayTap {
         let wp = (api.write_pos)(ch);
         let buf_size = (api.buf_size)(ch);
 
-        // Map Tap Offset onto a layer: 0 = newest (wp), 1 = oldest (loop end).
+        // Fixed full-delay read: the oldest slot (wp+1) — the frame the Write is
+        // about to overwrite this frame, i.e. one full lap back. No buffer yet →
+        // wet forced to 0 so only Dry*source passes.
         let (read_pos, wet) = if buf_size == 0 || tex == 0 {
-            (0u32, 0.0) // no buffer yet — pass input through (wet forced to 0)
+            (0u32, 0.0)
         } else {
-            let k = (self.params.tap_offset() * (buf_size - 1) as f32).round() as u32;
-            let k = k.min(buf_size - 1);
-            let read_pos = (wp + buf_size - k) % buf_size;
-            (read_pos, self.params.buffer_mix())
+            ((wp + 1) % buf_size, self.params.wet())
         };
 
         let quad = self.quad.as_ref().unwrap();
@@ -53,7 +59,7 @@ impl DelayTap {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(host_viewport[0], host_viewport[1], host_viewport[2], host_viewport[3]);
         }
-        output.draw(quad, input_tex, uv_scale, tex, read_pos as f32, wet);
+        output.draw(quad, input_tex, uv_scale, tex, read_pos as f32, self.params.dry(), wet);
     }
 }
 
@@ -76,8 +82,11 @@ impl SimpleFFGLInstance for DelayTap {
 
     fn draw(&mut self, data: &FFGLData, frame_data: GLInput) {
         if self.output.is_none() {
-            self.quad = Some(QuadGeometry::new());
-            self.output = Some(OutputProgram::new());
+            let quad = QuadGeometry::new();
+            let output = OutputProgram::new();
+            output.setup_quad(&quad); // enable the quad's vertex attributes (else black)
+            self.quad = Some(quad);
+            self.output = Some(output);
         }
 
         let input_tex = if !frame_data.textures.is_empty() {
@@ -127,8 +136,8 @@ impl SimpleFFGLInstance for DelayTap {
             tracing::info!(
                 frame = self.frame_count,
                 channel = self.params.channel() + 1,
-                tap_offset = format!("{:.2}", self.params.tap_offset()),
-                buffer_mix = format!("{:.2}", self.params.buffer_mix()),
+                dry = format!("{:.2}", self.params.dry()),
+                wet = format!("{:.2}", self.params.wet()),
                 bpm = format!("{:.1}", data.host_beat.bpm),
                 "delay-tap status"
             );
@@ -165,8 +174,8 @@ impl SimpleFFGLInstance for DelayTap {
             unique_id: *b"DlyT",
             name: *b"Delay Tap       ",
             ty: ffgl_core::info::PluginType::Effect,
-            about: "Delay reader: taps a shared channel at an offset, blends against input".to_string(),
-            description: "v3 delay line — Tap half (pairs with Delay Write)".to_string(),
+            about: "Delay read head: Dry*source + Wet*delayed (full lap). Place first in source->Tap->FX->Write".to_string(),
+            description: "v3 delay line — Tap head (pairs with Delay Write on the same Channel)".to_string(),
         }
     }
 }

@@ -1,10 +1,17 @@
-//! Delay Write (`DlyW`) — the recorder half of the v3 delay line.
+//! Delay Write (`DlyW`) — the record head of the v3 delay line.
 //!
-//! Writes its input into a shared ring-buffer channel (delay-core, loaded via
-//! pluglib) and outputs a Thru↔Playback blend of the live input against the
-//! oldest delayed frame — so one Write node alone is a complete delay. Regen
-//! feeds the output back into the buffer for trails; Blend selects how the write
-//! combines with what's already in the slot.
+//! Records its input into a shared ring-buffer channel (delay-core, via pluglib)
+//! and advances the tape one slot per frame. The record is additive-with-decay:
+//!
+//!     tape[slot] = Regen * old  +  Send * input
+//!
+//! where `old` is this slot's loop-old content. **Regen** is the decay rate (the
+//! ring-out tail); **Send** is the dub throw (how hard the current frame commits
+//! — pulse it, holding the Tap's Wet high, to pulse video echoes). Its output is
+//! a pure passthrough of the input — the record head is visually transparent;
+//! the loop is monitored by a Delay Tap on the same Channel. A Write with no Tap
+//! records into the aether. Single writer per channel keeps the accumulation a
+//! trivial read-modify-write (no multi-writer barrier).
 
 mod params;
 mod shader;
@@ -16,7 +23,7 @@ use gl::types::*;
 use ffgl_core::handler::simplified::SimpleFFGLInstance;
 use ffgl_core::{FFGLData, GLInput};
 
-use params::{Blend, SyncMode, WriteParams, NUM_PARAMS};
+use params::{SyncMode, WriteParams, NUM_PARAMS};
 use pluglib::api;
 use shader::WriteShaders;
 
@@ -120,7 +127,8 @@ impl DelayWrite {
         let api = api();
         let ch = self.params.channel();
         let loop_length = self.delay_frames(data.host_beat.bpm, (api.buffer_depth)());
-        let first = (api.begin_frame_write)(ch, loop_length, width, height, frame_id(data)) == 1;
+        // Advance the tape once this frame (single writer: barrier flag unused).
+        (api.begin_frame_write)(ch, loop_length, width, height, frame_id(data));
         let tex = (api.tex)(ch);
         let wp = (api.write_pos)(ch);
         let buf_size = (api.buf_size)(ch);
@@ -134,69 +142,40 @@ impl DelayWrite {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
                 gl::Viewport(host_viewport[0], host_viewport[1], host_viewport[2], host_viewport[3]);
             }
-            shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 0.0);
+            shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 1.0, 0.0);
             return;
         }
 
-        // 1. Write the input into buffer[wp] via the selected blend mode.
+        // 1. Record into buffer[wp]:  tape[wp] = Regen*old + Send*input.
+        //    `old` is this slot's loop-old content (single writer). The fade
+        //    pre-pass scales it in place by Regen; the additive write then adds
+        //    Send*input via a CONSTANT_COLOR=Send, dst=ONE blend. A Delay Tap
+        //    upstream reads this same slot pre-overwrite (one full lap back).
+        let regen = self.params.regen();
+        let send = self.params.send();
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
             gl::FramebufferTextureLayer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, tex, 0, wp as i32);
             gl::Viewport(0, 0, width as i32, height as i32);
         }
-        match self.params.blend() {
-            Blend::Replace => {
-                // Blend already disabled by draw() — a clean overwrite.
-                shaders.write_pass(input_tex, uv_scale);
-            }
-            Blend::Crossfade => {
-                // Delay feedback: buffer[wp] = regen*old + (1-regen)*input, where
-                // "old" is this slot's loop-old ring content (single-writer path).
-                let regen = self.params.regen();
-                shaders.fade_pass(tex, wp as f32, regen);
-                unsafe {
-                    gl::Enable(gl::BLEND);
-                    let s = 1.0 - regen;
-                    gl::BlendColor(s, s, s, s);
-                    gl::BlendFunc(gl::CONSTANT_COLOR, gl::ONE);
-                }
-                shaders.write_pass(input_tex, uv_scale);
-                unsafe {
-                    gl::Disable(gl::BLEND);
-                }
-            }
-            Blend::Additive => {
-                // IFS accumulation coordinated by the frame barrier: several
-                // Writes (each behind a contractive transform) sum into one slot.
-                //   buffer[wp] = regen*prev + Σ inputs
-                // The first writer of the frame establishes the base by fading the
-                // PREVIOUS slot (Regen=0 clears — the seed / clean case); reads a
-                // different layer than it writes, so no aliasing. Every writer then
-                // adds its input additively (GL_ONE, GL_ONE). Later writers skip the
-                // fade (barrier: first == false) and accumulate onto the base.
-                if first {
-                    let read_layer = (wp + buf_size - 1) % buf_size; // previous iteration
-                    shaders.fade_pass(tex, read_layer as f32, self.params.regen());
-                }
-                unsafe {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFunc(gl::ONE, gl::ONE);
-                }
-                shaders.write_pass(input_tex, uv_scale);
-                unsafe {
-                    gl::Disable(gl::BLEND);
-                }
-            }
+        shaders.fade_pass(tex, wp as f32, regen);
+        unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendColor(send, send, send, send);
+            gl::BlendFunc(gl::CONSTANT_COLOR, gl::ONE);
+        }
+        shaders.write_pass(input_tex, uv_scale);
+        unsafe {
+            gl::Disable(gl::BLEND);
         }
 
-        // 2. Output Thru↔Playback: mix live input against the oldest frame.
+        // 2. Output = passthrough of the input. The record head is transparent;
+        //    the loop is monitored by a Delay Tap on the same Channel.
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(host_viewport[0], host_viewport[1], host_viewport[2], host_viewport[3]);
         }
-        let read_pos = (wp + 1) % buf_size; // oldest = loop_length frames back
-        let wet = self.params.thru_playback();
-        shaders.output.draw(&shaders.quad, input_tex, uv_scale, tex, read_pos as f32, wet);
+        shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 1.0, 0.0);
     }
 }
 
@@ -285,8 +264,8 @@ impl SimpleFFGLInstance for DelayWrite {
                 frame = self.frame_count,
                 channel = self.params.channel() + 1,
                 delay_frames = self.latched_delay,
-                thru_playback = format!("{:.2}", self.params.thru_playback()),
                 regen = format!("{:.2}", self.params.regen()),
+                send = format!("{:.2}", self.params.send()),
                 fps = format!("{:.1}", self.fps_estimate),
                 bpm = format!("{:.1}", data.host_beat.bpm),
                 tex_w = width, tex_h = height,
@@ -326,8 +305,8 @@ impl SimpleFFGLInstance for DelayWrite {
             unique_id: *b"DlyW",
             name: *b"Delay Write     ",
             ty: ffgl_core::info::PluginType::Effect,
-            about: "Delay recorder: writes input to a shared channel, outputs live/playback blend".to_string(),
-            description: "v3 delay line — Write half (pairs with Delay Tap)".to_string(),
+            about: "Delay record head: records input to a shared channel (Regen decay + Send throw), passes input through".to_string(),
+            description: "v3 delay line — Write head (pairs with Delay Tap on the same Channel)".to_string(),
         }
     }
 }

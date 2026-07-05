@@ -17,8 +17,8 @@ use std::ptr;
 
 /// Shared fullscreen-quad vertex shader.
 pub const VS_SRC: &str = include_str!("shaders/fullscreen.vert.glsl");
-/// Shared output pass: `out = mix(node_input, buffer[layer], wet)`. Both the
-/// Write output (Thru↔Playback) and the Tap output (Buffer Mix) are this shape.
+/// Shared output pass: `out = clamp(dry*node_input + wet*buffer[layer], 0, 1)`.
+/// The Tap uses both gains (Dry/Wet); the Write uses dry=1, wet=0 (passthrough).
 pub const FS_OUTPUT: &str = include_str!("shaders/output.frag.glsl");
 
 /// A unit quad (pos + uv) drawn as a triangle strip. Attribute locations are
@@ -141,7 +141,7 @@ impl Drop for ShaderProgram {
     }
 }
 
-/// The shared node-output pass (`FS_OUTPUT`): `mix(node_input, buffer[layer], wet)`.
+/// The shared node-output pass (`FS_OUTPUT`): `clamp(dry*input + wet*buffer[layer])`.
 /// Input goes to texture unit 0 (sampler2D), buffer to unit 1 (sampler2DArray).
 /// Leaves unit 0 active with nothing bound, matching the host's expectation.
 pub struct OutputProgram {
@@ -150,6 +150,7 @@ pub struct OutputProgram {
     loc_uv_scale: GLint,
     loc_buffer: GLint,
     loc_layer: GLint,
+    loc_dry: GLint,
     loc_wet: GLint,
 }
 
@@ -160,13 +161,22 @@ impl OutputProgram {
         let loc_uv_scale = prog.uniform_loc("u_uv_scale");
         let loc_buffer = prog.uniform_loc("u_buffer");
         let loc_layer = prog.uniform_loc("u_layer");
+        let loc_dry = prog.uniform_loc("u_dry");
         let loc_wet = prog.uniform_loc("u_wet");
-        Self { prog, loc_input, loc_uv_scale, loc_buffer, loc_layer, loc_wet }
+        Self { prog, loc_input, loc_uv_scale, loc_buffer, loc_layer, loc_dry, loc_wet }
     }
 
-    /// Draw `mix(input, buffer[layer], wet)` into the currently bound FBO.
-    /// `buffer_tex` may be 0 (samples black) — pass `wet = 0.0` for a clean
-    /// passthrough of `input_tex` when no ring buffer exists yet.
+    /// Bind `quad`'s vertex attributes for this program's VAO. Call once after
+    /// creating the quad (attribute locations 0/1 are bound at link for every
+    /// program, so one setup serves all passes). Without this the VAO has no
+    /// enabled attributes and `draw` rasterizes a degenerate quad → black output.
+    pub fn setup_quad(&self, quad: &QuadGeometry) {
+        quad.setup_attrs(self.prog.program);
+    }
+
+    /// Draw `clamp(dry*input + wet*buffer[layer])` into the currently bound FBO.
+    /// `buffer_tex` may be 0 (samples black) — pass `wet = 0.0` (and `dry = 1.0`)
+    /// for a clean passthrough of `input_tex` when no ring buffer exists yet.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -175,6 +185,7 @@ impl OutputProgram {
         uv_scale: [f32; 2],
         buffer_tex: GLuint,
         layer: f32,
+        dry: f32,
         wet: f32,
     ) {
         self.prog.use_program();
@@ -189,6 +200,7 @@ impl OutputProgram {
             gl::Uniform1i(self.loc_buffer, 1);
             gl::Uniform1f(self.loc_layer, layer);
 
+            gl::Uniform1f(self.loc_dry, dry);
             gl::Uniform1f(self.loc_wet, wet);
         }
         quad.draw();
