@@ -120,7 +120,7 @@ impl DelayWrite {
         let api = api();
         let ch = self.params.channel();
         let loop_length = self.delay_frames(data.host_beat.bpm, (api.buffer_depth)());
-        let _first = (api.begin_frame_write)(ch, loop_length, width, height, frame_id(data));
+        let first = (api.begin_frame_write)(ch, loop_length, width, height, frame_id(data)) == 1;
         let tex = (api.tex)(ch);
         let wp = (api.write_pos)(ch);
         let buf_size = (api.buf_size)(ch);
@@ -149,17 +149,38 @@ impl DelayWrite {
                 // Blend already disabled by draw() — a clean overwrite.
                 shaders.write_pass(input_tex, uv_scale);
             }
-            // Additive (Stage 3) currently aliases Crossfade; true barrier-driven
-            // additive accumulation lands with Stage 3.
-            Blend::Crossfade | Blend::Additive => {
+            Blend::Crossfade => {
+                // Delay feedback: buffer[wp] = regen*old + (1-regen)*input, where
+                // "old" is this slot's loop-old ring content (single-writer path).
                 let regen = self.params.regen();
-                // buffer[wp] = regen*old + (1-regen)*input
                 shaders.fade_pass(tex, wp as f32, regen);
                 unsafe {
                     gl::Enable(gl::BLEND);
                     let s = 1.0 - regen;
                     gl::BlendColor(s, s, s, s);
                     gl::BlendFunc(gl::CONSTANT_COLOR, gl::ONE);
+                }
+                shaders.write_pass(input_tex, uv_scale);
+                unsafe {
+                    gl::Disable(gl::BLEND);
+                }
+            }
+            Blend::Additive => {
+                // IFS accumulation coordinated by the frame barrier: several
+                // Writes (each behind a contractive transform) sum into one slot.
+                //   buffer[wp] = regen*prev + Σ inputs
+                // The first writer of the frame establishes the base by fading the
+                // PREVIOUS slot (Regen=0 clears — the seed / clean case); reads a
+                // different layer than it writes, so no aliasing. Every writer then
+                // adds its input additively (GL_ONE, GL_ONE). Later writers skip the
+                // fade (barrier: first == false) and accumulate onto the base.
+                if first {
+                    let read_layer = (wp + buf_size - 1) % buf_size; // previous iteration
+                    shaders.fade_pass(tex, read_layer as f32, self.params.regen());
+                }
+                unsafe {
+                    gl::Enable(gl::BLEND);
+                    gl::BlendFunc(gl::ONE, gl::ONE);
                 }
                 shaders.write_pass(input_tex, uv_scale);
                 unsafe {

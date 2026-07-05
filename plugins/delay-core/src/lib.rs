@@ -163,17 +163,19 @@ pub extern "C" fn dc_begin_frame_write(
         ch.frame_active = false;
     }
 
-    // -1 leaves a spare slot so read and write never alias the same layer.
-    let ll = loop_length.clamp(1, BUFFER_DEPTH - 1);
-    let buf_size = ll + 1;
-    let buf = ch.buffer.as_mut().unwrap();
-    buf.loop_length = ll;
-
     let first_writer = !ch.frame_active || ch.frame_id != frame_id;
     if first_writer {
+        // The first writer of a frame owns the frame's parameters and the slot
+        // advance. Later writers on the same channel/frame (additive
+        // accumulation) leave loop_length and write_pos untouched, so buf_size
+        // and the target slot stay stable while they accumulate.
+        let ll = loop_length.clamp(1, BUFFER_DEPTH - 1); // -1 leaves a spare slot
+        let buf = ch.buffer.as_mut().unwrap();
+        buf.loop_length = ll;
+        let buf_size = ll + 1;
+        buf.write_pos = (buf.write_pos + 1) % buf_size;
         ch.frame_id = frame_id;
         ch.frame_active = true;
-        buf.write_pos = (buf.write_pos + 1) % buf_size;
     }
     first_writer as u32
 }
