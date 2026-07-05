@@ -1,0 +1,16 @@
+[package]
+name = "delay-core"
+version = "0.1.0"
+edition = "2021"
+
+# cdylib so both plugin DLLs can runtime-load ONE copy (shared static registry).
+# Output artifact: delay_core.{dll,dylib}. Must sit beside the plugin DLLs;
+# pluglib locates it from each plugin's own directory (see pluglib).
+[lib]
+name = "delay_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+gl = { workspace = true }
+gl_loader = { workspace = true }
+tracing = { workspace = true }

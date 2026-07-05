@@ -26,6 +26,27 @@
       "dll": "delay_line_module.dll"
     },
     {
+      "name": "delay_core",
+      "display_name": "Delay Core (shared lib)",
+      "type": "rust",
+      "crate": "delay-core",
+      "dll": "delay_core.dll"
+    },
+    {
+      "name": "delay_write",
+      "display_name": "Delay Write",
+      "type": "rust",
+      "crate": "delay-write",
+      "dll": "delay_write.dll"
+    },
+    {
+      "name": "delay_tap",
+      "display_name": "Delay Tap",
+      "type": "rust",
+      "crate": "delay-tap",
+      "dll": "delay_tap.dll"
+    },
+    {
       "name": "mirror_transform",
       "type": "rust",
       "crate": "mirror-transform",

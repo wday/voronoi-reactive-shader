@@ -173,12 +173,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "delay-core"
+version = "0.1.0"
+dependencies = [
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
 name = "delay-line-module"
 version = "0.1.0"
 dependencies = [
  "ffgl-core",
  "gl",
  "gl_loader",
+ "tracing",
+]
+
+[[package]]
+name = "delay-tap"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "pluglib",
+ "tracing",
+]
+
+[[package]]
+name = "delay-write"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "pluglib",
  "tracing",
 ]
 
@@ -509,6 +540,13 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+
+[[package]]
+name = "pluglib"
+version = "0.1.0"
+dependencies = [
+ "gl",
+]
 
 [[package]]
 name = "prettyplease"

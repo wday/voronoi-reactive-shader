@@ -1,0 +1,15 @@
+[package]
+name = "pluglib"
+version = "0.1.0"
+edition = "2021"
+
+# rlib: statically linked INTO each plugin cdylib. Two consequences relied on:
+#  1. The `gl` crate's fn-pointer statics are duplicated per plugin DLL, so each
+#     plugin's own gl::load_with populates its own copy (GL fn pointers are per-DLL).
+#  2. A code address inside pluglib resolves to the *plugin's* module, which is how
+#     the loader finds the plugin's own directory to locate delay_core beside it.
+[lib]
+name = "pluglib"
+
+[dependencies]
+gl = { workspace = true }

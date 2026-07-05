@@ -133,3 +133,71 @@ test.
 Build the real Stages 1–2 (delay-core + pluglib crates, delay-write / delay-tap
 skeletons on the core lib) to a deployable state, then a real Resolume test run
 of the architecture before adding depth (Stages 3–7) or releasing.
+
+## 2026-07-05 — Stages 1–2 built: four crates compile + deploy-ready
+
+Built the real skeleton. Four new workspace crates under `plugins/`:
+
+- **delay-core** (cdylib → `delay_core.dll`): the shipped `registry.rs` ported to
+  a **scalar C ABI** (`dc_acquire/release/begin_frame_write/tex/write_pos/
+  buf_size/buffer_depth`). Single shared owner across the two plugin DLLs. Runs
+  its own `gl::load_with` (GL fn pointers are per-DLL) and owns only the ring
+  **texture array** — FBOs are now plugin-local (see below). Verified the DLL
+  exports all 7 `dc_*` symbols (`objdump -p`).
+- **pluglib** (rlib): the proven Windows runtime loader (LoadLibraryExW of the
+  sibling `delay_core.dll` by absolute path, from the plugin's own module dir) +
+  a `#[cfg(unix)]` dladdr/dlopen fallback (macOS **untested**), + shared GL
+  helpers (`QuadGeometry`, `ShaderProgram`, `OutputProgram`) and shared shaders.
+- **delay-write** (cdylib → `DlyW`, `Delay Write   `): 8 behavior-named params
+  (Channel, Sync Mode, Subdivision, Delay Ms, Delay Frames, Thru↔Playback, Regen,
+  Blend). One node = complete delay: writes input to the channel, outputs
+  `mix(live, oldest, thru_playback)`.
+- **delay-tap** (cdylib → `DlyT`, `Delay Tap     `): 4 params (Channel, Tap
+  Offset, Multi-tap [reserved, Stage 5], Buffer Mix). Reads channel at offset,
+  `mix(own_input, buffer[offset], buffer_mix)`.
+
+### Design decisions made while building
+- **FBOs stay plugin-local; only the texture crosses the boundary.** Each Write
+  makes its own FBO and attaches the shared texture layer. This sidesteps the
+  FBO-context-sharing question entirely — only texture *names* (genuinely shared
+  in Resolume's one GL context) cross DLLs. This IS the remaining Stage-0 unknown
+  (GL-handle sharing across the two DLLs), now the first thing the Resolume test
+  proves.
+- **Frame barrier key = `FFGLData.host_time` as whole ms** (resolves the Stage-1
+  open question). host_time is host-set and shared by all instances in a frame →
+  deterministic first-writer detection. **Unverified: does Resolume actually call
+  SetTime?** If not, it falls back to per-instance `now()` — fine for a single
+  Write (still advances once/frame), but multi-writer accumulation (Stage 3)
+  needs the real shared value. **First Resolume test must confirm host_time is
+  populated** (watch the write_pos advance with two Writes on one channel).
+- **`dc_release` does NO GL** (leaks the texture name, like shipped v2) — it can
+  run off the GL thread (Drop / param change). The only GL delete is in
+  `begin_frame_write`'s realloc path, which always runs inside `draw()`.
+- **Blend = Additive currently aliases Crossfade** — true barrier-driven additive
+  accumulation is Stage 3.
+- Registered all three DLLs in `plugins.json` + workspace members.
+
+### Build / deploy
+- Compiles clean on the Windows MSVC toolchain (`cargo build -p delay-core
+  -p delay-write -p delay-tap`, ~1.3s incremental). DLLs: delay_core 258 KB,
+  delay_write 949 KB, delay_tap 940 KB.
+- **Deploy all three together** — the plugins load `delay_core.dll` from their own
+  directory, so it must sit beside them in Resolume's Extra Effects folder:
+  `make build && make deploy PLUGIN=delay_core && make deploy PLUGIN=delay_write
+  && make deploy PLUGIN=delay_tap` (or `make deploy` for all).
+- Not yet done (Stage 7): CI/release packaging of `delay_core.dll` co-location;
+  macOS unix-loader path is untested; migration notes for `DLMd` compositions.
+
+### Resolume smoke test — what to check (before Stages 3–7)
+1. **GL-handle sharing across DLLs**: one `Delay Write` on a layer records; a
+   `Delay Tap` on another layer, same Channel, reads it back. Tap shows Write's
+   buffer → cross-DLL texture sharing confirmed.
+2. **host_time barrier**: two Writes on one Channel advance write_pos exactly once
+   per frame (not twice). If they double-advance, Resolume isn't setting host_time
+   — fall back plan noted above.
+3. **One-node echo**: a single `Delay Write`, Thru↔Playback ~0.5, sensible Time =
+   a usable echo out of the box.
+4. **Feedback loop**: `Delay Tap → [FX] → Delay Write` on the same Channel.
+5. **Teardown**: add/remove effects repeatedly — no crash (textures leak until
+   Resolume exits, by design). Confirm Resolume ignores `delay_core.dll` (no FFGL
+   entry point) gracefully during its plugin scan.
