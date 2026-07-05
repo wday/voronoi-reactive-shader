@@ -1,0 +1,3 @@
+# Windows build output lives on C:\ (CARGO_TARGET_DIR), nothing local to ignore,
+# but guard against a stray in-tree target/.
+/target/

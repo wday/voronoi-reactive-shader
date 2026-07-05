@@ -1,0 +1,8 @@
+[package]
+name = "pluglib"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+# rlib — statically linked into each plugin. Holds NO shared state; the shared
+# state lives in delay_core.dll, which this code loads at runtime.

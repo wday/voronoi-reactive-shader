@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["delay-core", "pluglib", "plugin-a", "plugin-b", "host"]
