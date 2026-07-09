@@ -1,0 +1,2628 @@
+ ▐▛███▜▌   Claude Code v2.1.200
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/dev/voronoi-reactive-shader/features/delay-line-v3/spike-win
+
+ ▎ Fable 5 is back.
+ ▎ Until July 7, you can use up to 50% of your plan's weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Learn more
+
+❯ been a while, catch me up on recent developments                              
+  ⎿  Not logged in · Please run /login
+
+✻ Churned for 0s
+
+❯ /login 
+  ⎿  Login successful
+
+● Welcome back. Let me survey what's happened since you were last active.
+
+  Ran 2 shell commands (ctrl+o to expand)
+  ⎿  2 skills available
+
+● The most recent work (April 6–7) is uncommitted. Let me read the WIP notes and
+  newest feature docs.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Here's where things stand. Your last memory snapshot knew about the 8 plugins,
+  IFS toolkit, and shader harness — a lot has landed since, and the newest work
+  (Apr 6–7) is all uncommitted.
+
+  Since your last snapshot
+
+  Committed to prep/beta-release:
+  - Delay-line module — the dominant thread (Mar 12 → Apr 7). Evolved through
+  sync modes, tap mode, decay, a VRAM fix, then a big simplification refactor to
+  the loop-length model (Send sets loop length, Receive taps in), and finally
+  a39693f "simplify delay line module" (Apr 7).
+  - Slew-limiter plugin — per-pixel temporal rate limiter for taming strobing
+  (already in your memory).
+  - Flow plugin family — flow-inject + flow-euler ISF shaders, plus stereo_depth
+  (side-by-side input). Spec/requirements/plan/devlog all in
+  features/flow-plugin-family/.
+  - spout-publish tool — pipes raw RGBA to a Spout sender (Mar 12).
+  - Repo hygiene — vendored deps moved to vendor/ (that's the m vendor/ffgl-rs
+  submodule change), CI multi-ISF build fix.
+
+  Uncommitted / in-flight (this is the real "what's new"):
+
+  Item: features/delay-module-v2/
+  State: reqs + plan + devlog, no code
+  What it is: Restructure delay from Send/Receive → Read/Write with an FX-insert
+
+    point between them. Mixing delegated to Resolume opacity/blend. N+1
+    ring-buffer "stitch" sizing. Linked to rktpnt jzp15i.
+  ────────────────────────────────────────
+  Item: features/overdub/
+  State: reqs + plan, no devlog
+  What it is: Decay + additive accumulation on Send, for beat-synced IFS
+    attractors. Multi-Send frame coordination.
+  ────────────────────────────────────────
+  Item: tools/avc-query/
+  State: built & tested, untracked
+  What it is: uv Python CLI to query Resolume .avc files ("what effects use
+    LoRez", "which clips have cameras"). Natural-language-ish grammar. Also has
+    features/avc-query/.
+  ────────────────────────────────────────
+  Item: tools/teapot-stereo/
+  State: untracked
+  What it is: (stereo-depth companion, likely)
+  ────────────────────────────────────────
+  Item: drawings/feedback models.excalidraw
+  State: Apr 6
+  What it is: Feedback-model diagrams.
+  ────────────────────────────────────────
+  Item: blog-notes.md
+  State: notes
+  What it is: New direction: Eleventy blog + POSSE/Mastodon (ominous.net
+  invite),
+     brutalist hand-built site as creative artifact.
+  ────────────────────────────────────────
+  Item: notes.md
+  State: empty
+  What it is: —
+
+  One thing worth flagging
+
+  You have two divergent delay-line directions both sitting uncommitted: overdub
+  (Mar 17 — adds decay/additive to the Send/Receive model) and delay-module-v2
+  (Mar 22 — replaces Send/Receive with Read/Write). Meanwhile the Apr 7 commit
+  simplified the delay module on the committed line. So it's ambiguous which
+  model is now canonical and whether overdub's accumulation goal survives into
+  the v2 Read/Write world.
+
+  Where do you want to pick up — resolve the delay-line v2-vs-overdub direction,
+  commit the avc-query tool, or something else? I can also update project
+  memory once you tell me which of these is the current focus.
+
+✻ Sautéed for 48s
+
+※ recap: Catching you up on the voronoi-reactive-shader project after time away; the newest work is all uncommitted. Next, decide the delay-line direction between the overdub and read/write v2 approaches, then commit the avc-query tool. (disable recaps in /config)
+
+❯ yes, and yes                                                                  
+
+● I'll drive both. The delay-line direction is genuinely your architectural
+  call, so let me put the decision in front of you — and in parallel I'll
+  inspect the avc-query tool to stage a clean commit.
+
+  Listed 1 directory (ctrl+o to expand)
+
+● User answered Claude's questions:
+  ⎿  · Two uncommitted delay-line directions conflict — which is canonical going
+     forward? → v2 Read/Write, absorb overdub
+
+● Decision recorded: v2 Read/Write is canonical, overdub folds in. Let me check
+  the repo's ignore setup so the avc-query commit stays clean, then wire up both
+  outcomes.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● .venv is self-ignored by uv's auto-created .venv/.gitignore, and root ignores
+  __pycache__/*.pyc. Clean. Let me verify the exact staged set, commit
+  avc-query, then record the delay-line decision.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Clean — 10 files, no venv/cache. Committing:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now record the delay-line decision. Reading the current v2 devlog and overdub
+  docs so I annotate them accurately:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(~/dev/voronoi-reactive-shader/features/delay-module-v2/devlog.md)
+  ⎿  Added 19 lines
+      26  - Write outputs buffer content (what it wrote), not passthrough
+           of live input
+      27  - "No Write active = Read frozen on a frame" is an acceptable e
+          dge case for now
+      28  - Linked to rktpnt project `jzp15i` (Delay Module v2), task `j6
+          kwz5`
+      29 +                                                               
+      30 +## 2026-07-04 — Direction resolved: v2 is canonical, overdub ab
+         +sorbed                                                         
+      31 +                                                               
+      32 +Two uncommitted delay-line directions had diverged: `overdub` (
+         +decay +                                                        
+      33 +additive multi-Send on the old Send/Receive model) and this v2 
+         +Read/Write                                                     
+      34 +restructure. Decided **v2 Read/Write is the canonical model** g
+         +oing forward.                                                  
+      35 +                                                               
+      36 +Overdub's IFS-accumulation goal folds into v2 rather than livin
+         +g as a                                                         
+      37 +separate feature:                                              
+      38 +- **Decay** lives on Write (`Write(ch1, decay=0.9)`), scaling t
+         +he previous                                                    
+      39 +  buffer content before the new write.                         
+      40 +- **Additive accumulation** across contractive maps is achieved
+         + via                                                           
+      41 +  Resolume blend modes on Read — which v2 already delegates to 
+         +Resolume —                                                     
+      42 +  instead of the plugin's own `GL_BLEND(ONE, ONE)` multi-Send c
+         +oordination.                                                   
+      43 +                                                               
+      44 +Net effect: `features/overdub/` is superseded as an implementat
+         +ion but                                                        
+      45 +survives as a **validation composition** (the IFS attractor rec
+         +ipe) to                                                        
+      46 +prove v2 out once Read/Write is built. Next step: implement the
+         + v2 plan                                                       
+      47 +(registry N+1 stitch, params restructure, Read/Write passes).  
+
+● Update(~/dev/voronoi-reactive-shader/features/overdub/requirements.md)
+  ⎿  Added 6 lines
+       1  # Delay-Line Overdub for IFS Accumulation
+       2  
+       3 +> **Status (2026-07-04): SUPERSEDED by `features/delay-module-v
+         +2/`.** The                                                     
+       4 +> decay + additive-accumulation goal is absorbed into the v2 Re
+         +ad/Write                                                       
+       5 +> model — decay lives on Write, additive accumulation happens v
+         +ia Resolume                                                    
+       6 +> blend modes on Read. This doc is retained as the **IFS attrac
+         +tor                                                            
+       7 +> validation composition** for v2, not as a standalone implemen
+         +tation.                                                        
+       8 +                                                               
+       9  ## Problem
+      10  
+      11  The delay-line module currently does clean overwrites on Send —
+           `buffer[write_pos] = input`. This prevents accumulation, which
+           is required for iterated function systems where multiple contr
+          active maps must write transformed copies into a shared buffer 
+          each beat subdivision.
+● Now update project memory to reflect the canonical decision:
+
+  Recalled 1 memory, wrote 2 memories (ctrl+o to expand)
+
+● Now the MEMORY.md index — add the new pointer and note avc-query landed:
+
+  Recalled 1 memory, wrote 1 memory (ctrl+o to expand)
+
+● Both done.
+
+  avc-query — committed (f147ed2): 10 files (5 source modules +
+  pyproject/uv.lock + 3 feature docs), no venv/cache junk. Clean.
+
+  Delay-line direction — resolved: v2 Read/Write is canonical, overdub absorbed.
+  Recorded in three places:
+  - features/delay-module-v2/devlog.md — dated decision entry explaining the
+  fold-in (decay on Write, additive accumulation via Resolume blend on Read).
+  - features/overdub/requirements.md — banner marking it SUPERSEDED, retained as
+  the IFS-attractor validation composition for v2.
+  - Project memory — new [delay-line v2 direction] memory (canonical),
+  forward-pointer added to the shipped loop-length memory, MEMORY.md index
+  updated.
+
+  Two notes:
+  - The delay-line decision docs (features/delay-module-v2/, features/overdub/)
+  are still untracked — I only committed avc-query as you asked. Say the word
+  and I'll commit the resolved delay docs too.
+  - Next concrete step on the delay line is implementing v2 — there's a plan but
+  no code yet (registry N+1 stitch → params restructure → Read/Write passes).
+  Want me to start on that, or handle the other loose WIP first (blog-notes, the
+  excalidraw feedback models, teapot-stereo)?
+
+✻ Churned for 2m 17s
+
+❯ commit the resolved delay, summarize the delay line v2                        
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Committed (100af1c). Here's the summary of where delay-line v2 stands.
+
+  Delay-Line v2 — Read/Write model
+
+  The core idea: split the delay into two plugin instances — Read and Write —
+  with a Resolume FX chain between them. That FX-insert point is the whole
+  reason v2 exists: it lets Resolume effects process the feedback signal before
+  it's written back to the buffer, which the old Send/Receive model couldn't do.
+
+  Signal flow:
+  Source → [gain/exposure] → Read → [FX insert] → Write → Output
+                              │                      │
+                      Resolume blends                ↓
+                      input + buffer read        Ring Buffer
+                              ↑                      │
+                              └──────────────────────┘
+
+  Division of labor — this is the key simplification:
+  - Read is trivial: outputs buffer[read_pos], nothing else. No timing, no
+  mixing, no feedback param. All mixing is delegated to Resolume's native
+  controls — effect opacity + blend mode on Read = feedback level; a
+  gain/exposure effect before Read = send level.
+  - Write owns everything stateful: timing, buffer management, write_pos
+  advance, and decay. It outputs what it wrote.
+
+  The N+1 stitch (the subtle bit): naively reading buffer[write_pos] gives a
+  1-frame delay regardless of loop length, because Read sees what Write wrote
+  last frame. Fix: allocate loop_length + 1 slots and have Read read (write_pos 
+  + 1) % buf_size — the oldest slot, which is exactly loop_length frames old.
+  The +1 prevents read/write aliasing the same frame. Registry returns buf_size
+  so Read computes its own position without knowing timing.
+
+  How overdub folds in: the IFS-accumulation goal (beat-synced fractal
+  attractors) doesn't need its own model. decay on Write scales prior buffer
+  content before the new write; additive accumulation across contractive maps
+  happens via Resolume blend modes on Read — not plugin-side GL_BLEND(ONE,ONE)
+  multi-Send coordination. features/overdub/ survives as the validation
+  composition that proves v2 out.
+
+  Status: requirements + plan + devlog are complete and now committed. No code 
+  yet. Implementation order per the plan:
+  1. Registry (registry.rs) — N+1 buffer sizing, read_channel returns buf_size
+  2. Params (params.rs) — restructure (drop Passthrough; 8→7 params)
+  3. Read/Write passes (shader.rs, delay.rs) — trivial Read pass, Write owns
+  timing + decay
+
+  Linked to rktpnt project jzp15i, task j6kwz5.
+
+  Want me to start on step 1 (the registry changes)?
+
+✻ Cogitated for 29s
+
+❯ This seems out of date compared to what I have been using, something might be 
+  stale. I think the built code handles the read/write split with resolume fx   
+  in between and fixed the n+1 issue, is this just stale cruft that never got   
+  deleted                                                                       
+
+● Good instinct — let me verify against the actual built code rather than trust
+  the docs. Checking what the delay-line plugin source actually implements.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● The user is right. Shipped code already has Mode: Read/Write (params 0–6, 7
+  params, Decay "Write only"). That's the v2 model. Let me confirm the N+1
+  stitch and read logic in the registry/delay code.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Confirmed — you're right, and my earlier summary was wrong. The v2 model is
+  already built and shipped. The features/delay-module-v2/ docs describe work
+  that's done. Let me pin down when it landed so I correct the record
+  accurately.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● That settles it. Commit a39693f "simplify delay line module" (Apr 7) IS the v2
+  implementation — Read/Write mode, N+1 stitch, decay-on-Write, 7 params
+  (Passthrough gone). The name never said "v2," which is why the log didn't give
+  it away. The features/delay-module-v2/ docs describe already-shipped code,
+  and my summary + the devlog entry I just committed are wrong. Let me check one
+  open question — whether overdub's additive-accumulation piece also shipped,
+  or only the decay crossfade:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now I have the full picture, and it changes the story. Here's what's actually
+  true:
+
+  Shipped in a39693f (Apr 7) — this is v2, fully built:
+  - Read/Write mode split ✓
+  - FX-insert between them ✓
+  - N+1 stitch: buf_size = loop_length + 1, read at (write_pos + 1) % buf_size ✓
+  - Single-advance-per-frame coordination for multiple Write instances on a
+  channel — via last_advance_time + FRAME_THRESHOLD (time-based, the "2ms" idea
+  from the overdub plan) ✓
+  - Decay on Write ✓ — but as a crossfade decay*old + (1-decay)*input
+
+  NOT shipped — the one genuinely-open piece:
+  - Overdub's additive accumulation (GL_BLEND(ONE,ONE) + is_first multi-Write)
+  for IFS attractors. There's no additive path — every Write does the same
+  crossfade. So overdub's distinctive mechanism is real remaining work, not
+  "absorbed and done."
+
+  So your instinct is correct: features/delay-module-v2/ is stale cruft — it
+  reads as future work but describes shipped code. My previous summary and the
+  devlog/memory I wrote were wrong (I trusted the docs over the code). Let me
+  correct the memory now, since it'll mislead future sessions:
+
+  Ran 1 shell command, recalled 1 memory, wrote 3 memories (ctrl+o to expand)
+
+● Memory corrected. Here's the state of the record now, and the one decision
+  left — what to do with the stale docs I just committed in 100af1c.
+
+  What's stale:
+  - features/delay-module-v2/ — describes shipped code (a39693f) as future work.
+  Its plan.md/requirements.md are retro-accurate as design, but the devlog.md
+  entry I added ("no code yet, next step is implement") is flat wrong.
+  - features/overdub/requirements.md banner I added — says "absorbed, done."
+  Actually the additive IFS accumulation is not built; only the decay crossfade
+  shipped. Overdub is a real open feature, mis-framed as closed.
+
+  I'd recommend: delete features/delay-module-v2/ (pure stale cruft — the
+  as-built model is now captured in memory and the code speaks for itself), and
+  reframe features/overdub/ as genuinely-open work (additive accumulation still
+  to build), dropping the false "superseded/done" banner. But it's your repo
+  history — how do you want it handled?
+
+● User answered Claude's questions:
+  ⎿  · How should I clean up the stale delay-line docs in commit 100af1c? → 
+     Delete v2, reframe overdub
+
+● Update(~/dev/voronoi-reactive-shader/features/overdub/requirements.md)
+  ⎿  Added 9 lines, removed 5 lines
+       1  # Delay-Line Overdub for IFS Accumulation
+       2  
+       3 -> **Status (2026-07-04): SUPERSEDED by `features/delay-module-v
+         -2/`.** The                                                     
+       4 -> decay + additive-accumulation goal is absorbed into the v2 Re
+         -ad/Write                                                       
+       5 -> model — decay lives on Write, additive accumulation happens v
+         -ia Resolume                                                    
+       6 -> blend modes on Read. This doc is retained as the **IFS attrac
+         -tor                                                            
+       7 -> validation composition** for v2, not as a standalone implemen
+         -tation.                                                        
+       3 +> **Status (2026-07-04): OPEN.** The delay line already ships t
+         +he Read/Write                                                  
+       4 +> model (commit `a39693f`) with a **decay crossfade** on Write 
+       5 +> (`decay*old + (1-decay)*input`). What is NOT built is this fe
+         +ature's core                                                   
+       6 +> mechanism: **additive** accumulation (`GL_BLEND(ONE,ONE)`, `i
+         +s_first`                                                       
+       7 +> multi-Write) so several contractive-map Writes sum into one b
+         +uffer slot per                                                 
+       8 +> subdivision to form IFS attractors. Open design question belo
+         +w: whether that                                                
+       9 +> additive path lives plugin-side or is done entirely via Resol
+         +ume blend modes                                                
+      10 +> on Read. The plan.md steps that assume the old Send/Receive m
+         +odel need                                                      
+      11 +> re-basing onto the shipped Read/Write code before implementin
+         +g.                                                             
+      12  
+      13  ## Problem
+      14  
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Done. Cleaned up in da035d0.
+
+  Final state:
+  - features/delay-module-v2/ — deleted (stale; the model shipped in a39693f).
+  - features/overdub/ — reframed to OPEN. Banner now correctly says only the
+  decay crossfade shipped; the additive GL_BLEND(ONE,ONE) IFS accumulation —
+  overdub's actual point — is unbuilt, with the plugin-side-vs-Resolume-blend
+  design question flagged and a note that plan.md needs re-basing onto the
+  shipped Read/Write code.
+  - Memory — corrected: delay-line as-built architecture (Read/Write, N+1,
+  crossfade, "read the code, docs lag"), delay-line overdub open, stale
+  v2-direction memory deleted, index updated.
+
+  Commit trail on the branch: 100af1c (my wrong "not yet coded" framing) →
+  da035d0 (correction). Left as a follow-up rather than an amend, per your
+  choice — history shows the correction rather than hiding it.
+
+  Net takeaway: the delay line is further along than the docs implied — v2 is
+  fully shipped. The one genuinely-open thread is overdub's additive
+  accumulation for IFS attractors. That's the real next piece of work if you
+  want to pursue the fractal-attractor compositions. Want me to look at what
+  re-basing overdub onto the shipped Read/Write code would actually take?
+
+✻ Cogitated for 2m 59s
+❯ overdub branch is a stale unmerged branch? probably dead then, the current    
+  state of the build is what I've been using live                               
+
+● Let me check whether an overdub branch actually exists and how any
+  delay-related branches sit relative to what you're running live (a39693f).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● No overdub branch exists — anywhere, local or remote. It was never a branch;
+  it only ever lived as untracked working-tree docs in features/overdub/, which
+  I just committed onto prep/beta-release. So there's no stale branch to be dead
+  — but the practical conclusion is the same: overdub is unbuilt, and nothing
+  is hiding in a branch waiting to be merged.
+
+  More broadly, your instinct that the current build is authoritative checks out
+  completely:
+
+  - Every branch is an ancestor of what you run live (da035d0, tip of
+  prep/beta-release). Nothing is ahead or diverged — no branch has work missing
+  from your build. All the old feature branches (delay-line-module,
+  delay-line-v2-tap-sync, ifs-fractal-toolkit, flow-plugin-family,
+  tuning/cleanup-and-ci) are fully folded in and safe to consider dead.
+
+  Two things worth flagging while we're here:
+
+  1. main is far behind — stuck at 2026-03-13. Your real trunk is
+  prep/beta-release, which carries everything: delay-line v2, slew-limiter, flow
+  family, avc-query. At some point that beta branch needs to land on main.
+  2. Your 3 new commits are local-only — f147ed2 (avc-query), 100af1c + da035d0
+  (delay doc cleanup) are ahead of origin/prep/beta-release (still at a39693f).
+  Not pushed yet.
+
+  Want me to push prep/beta-release, or leave it local for now? And separately —
+  those dead remote feature branches could be pruned if you want a tidier git 
+  branch -a.
+
+✻ Sautéed for 30s
+
+※ recap: Cleaning up stale delay-line docs to match the shipped build. Done: committed avc-query, deleted the stale v2 docs, reframed overdub as open, and fixed memory. Next: decide whether to push prep/beta-release, which is 3 commits ahead of origin. (disable recaps in /config)
+
+❯ prep/beta-release can be wrapped up, been using it live as beta               
+
+● "Wrapping up" a beta that's been running live touches outward-facing things
+  (main, remote, maybe a release tag/CI), so let me gather the actual state
+  before proposing exact steps.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Latest tag is v0.6.0, so beta wrap-up is likely v0.7.0. There's leftover
+  uncommitted work to triage first. Let me check the release trigger, the
+  submodule change, and what those untracked docs are before proposing the plan.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Before wrapping up, I found triage items — one is a real blocker. Here's the
+  state:
+
+  Release mechanics: release.yml triggers on any v* tag push and builds
+  Windows+macOS artifacts. Latest tag is v0.6.0, so this is v0.7.0. Beta is 10
+  commits ahead of main (which is stuck at March), 3 ahead of origin.
+
+  Leftover uncommitted files — my recommended handling:
+  - docs/ffgl-shader-inputs.md (264 lines, legit reference) → include
+  - drawings/feedback models.excalidraw → include (Zone.Identifier is already
+  gitignored)
+  - blog-notes.md → leave out (belongs to your separate blog project, not this
+  repo)
+  - notes.md → leave out (empty)
+  - vendor/ffgl-rs has modified content inside the submodule (not just a pointer
+  move) → leave untouched & flag — I won't sweep a dirty vendored dep into a
+  release without you knowing what changed there
+
+  The blocker: docs/delay-line-manual.md (261 lines, untracked) documents "three
+  modes — Send, Receive, and Tap" — that's the old model. Shipped code is
+  Read/Write. Shipping this in a beta release would ship a user manual
+  describing modes that no longer exist.
+
+● User answered Claude's questions:
+  ⎿  · docs/delay-line-manual.md describes the old Send/Receive/Tap model, but 
+     the build ships Read/Write. How should I handle it for the release? → Fix 
+     to Read/Write, include
+     · How should the beta land and release? → Merge to main + tag v0.7.0
+
+● Both decisions clear. Let me start with the substantive piece — rewriting the
+  manual to match the shipped Read/Write model. First I'll read the full manual
+  and the actual code so the rewrite is accurate.
+
+  Read 2 files (ctrl+o to expand)
+
+● The shipped params are clear: 7 params, Read/Write only, no
+  Feedback/Zero-Tap/Tap. Let me read delay.rs to get the exact Read and Write
+  behavior before I rewrite the manual.
+
+  Read 1 file (ctrl+o to expand)
+
+● I now have the complete shipped behavior. Two important truths the code
+  reveals, beyond just "Read/Write instead of Send/Receive/Tap":
+
+  1. Read ignores its own timing params and its input texture — it always
+  outputs the oldest slot (= loop_length frames old, set entirely by Write).
+  Mixing with live source is done via the Read effect's Resolume opacity/blend 
+  mode, not a Feedback param.
+  2. The IFS/Sierpinski section is fundamentally broken in this model — it
+  relies on additive multi-Send accumulation, but multiple Writes to one channel
+  in a frame re-apply decay each time (decay*(decay*old + …)), so they don't
+  cleanly sum. That's exactly the [overdub-open] gap. Shipping that composition
+  as working instructions would be wrong.
+
+  So I'll rewrite accurately and demote the IFS section to an honest "not yet
+  supported / roadmap" note (keeping the mirror-transform math as reference).
+  Writing the new manual:
+
+● Write(~/dev/voronoi-reactive-shader/docs/delay-line-manual.md)
+  ⎿  Added 165 lines, removed 185 lines
+        2  
+        3  ## What it is
+        4  
+        5 -A beat-synced frame delay effect for Resolume that creates fee
+          -dback loops, echo trails, and fractal accumulation. One DLL, t
+          -hree modes — Send, Receive, and Tap — that communicate through
+          - shared GPU buffer channels.                                  
+        5 +A beat-synced frame delay effect for Resolume that creates fee
+          +dback loops and                                               
+        6 +echo trails. One DLL, two modes — **Read** and **Write** — tha
+          +t communicate                                                 
+        7 +through shared GPU buffer channels.                           
+        8  
+        7 -The delay line does one thing Resolume can't: hold frames in a
+          - GPU ring buffer and read them back later. Everything else — s
+          -patial transforms, color, blur — is handled by native Resolume
+          - effects or companion plugins in the effect chain. The delay l
+          -ine is the clock; the FX chain is the function.               
+        9 +The delay line does one thing Resolume can't: hold frames in a
+          + GPU ring buffer                                              
+       10 +and read them back later. Everything else — spatial transforms
+          +, color, blur —                                               
+       11 +is handled by native Resolume effects or companion plugins pla
+          +ced *between*                                                 
+       12 +Read and Write in the effect chain. The delay line is the cloc
+          +k; the FX chain                                               
+       13 +is the function.                                              
+       14  
+       15  ## Parameters
+       16  
+       11 -| # | Name | Type | Range | Default | Relevant modes |        
+       12 -|---|------|------|-------|---------|----------------|        
+       13 -| 0 | Mode | Option | Receive / Send / Tap | Receive | — |    
+       14 -| 1 | Channel | Option | 1 / 2 | 1 | All |                    
+       15 -| 2 | Sync Mode | Option | Subdivision / Ms / Frames | Subdivi
+          -sion | All |                                                  
+       16 -| 3 | Subdivision | Option | 1/16 – 4 bars | 1/4 | All (when s
+          -ync = Subdivision) |                                          
+       17 -| 4 | Delay Ms | Integer | 1 – 4000 | 500 | All (when sync = M
+          -s) |                                                          
+       18 -| 5 | Delay Frames | Integer | 1 – 239 | 30 | All (when sync =
+          - Frames) |                                                    
+       19 -| 6 | Feedback | Standard | 0.0 – 1.0 | 0.5 | Receive only |  
+       20 -| 7 | Zero Tap | Standard | 0.0 – 1.0 | 0.0 | Send only |     
+       21 -| 8 | Decay | Standard | 0.0 – 1.0 | 0.0 | Send only |        
+       17 +| # | Name | Type | Range | Default | Applies to |            
+       18 +|---|------|------|-------|---------|------------|            
+       19 +| 0 | Mode | Option | Read / Write | Read | — |               
+       20 +| 1 | Channel | Option | 1 / 2 | 1 | Both |                   
+       21 +| 2 | Sync Mode | Option | Subdivision / Ms / Frames | Subdivi
+          +sion | Write |                                                
+       22 +| 3 | Subdivision | Option | 1/16 – 4 bars | 1/4 | Write (sync
+          + = Subdivision) |                                             
+       23 +| 4 | Delay Ms | Integer | 1 – 4000 | 500 | Write (sync = Ms) 
+          +|                                                             
+       24 +| 5 | Delay Frames | Integer | 1 – 239 | 30 | Write (sync = Fr
+          +ames) |                                                       
+       25 +| 6 | Decay | Standard | 0.0 – 1.0 | 0.0 | Write |            
+       26  
+       23 -FFGL doesn't support conditional visibility, so all 9 paramete
+          -rs are always shown. Parameters irrelevant to the current mode
+          - are simply ignored.                                          
+       27 +FFGL doesn't support conditional visibility, so all 7 paramete
+          +rs are always                                                 
+       28 +shown. Parameters that don't apply to the current mode are ign
+          +ored.                                                         
+       29  
+       25 -## The three modes                                            
+       30 +**Read ignores every timing parameter.** Read always outputs t
+          +he *oldest*                                                   
+       31 +frame in the buffer, which is exactly `loop_length` frames old
+          + — and                                                        
+       32 +`loop_length` is set entirely by the Write instance on the sam
+          +e channel. There                                              
+       33 +is no per-instance tap offset; the loop length is a property o
+          +f the channel,                                                
+       34 +owned by Write.                                               
+       35  
+       27 -### Send                                                      
+       36 +## The two modes                                              
+       37  
+       29 -Writes the incoming frame to the buffer. Outputs the **delayed
+          -** frame (not the input).                                     
+       38 +### Write                                                     
+       39  
+       31 -- **Zero Tap** controls what the Send layer actually shows. At
+          - 0.0, the output is pure delay — you see what was in the buffe
+          -r D frames ago. At 1.0, the output is the live input (passthro
+          -ugh). In between is a crossfade.                              
+       32 -- **Decay** controls how much of the previous buffer iteration
+          - survives when writing a new frame. At 0.0, each write is a cl
+          -ean overwrite (default, backward compatible). Above 0.0, the p
+          -revious content is scaled by decay before the new frame is ble
+          -nded additively on top. This is the accumulation mechanism for
+          - IFS fractals.                                                
+       40 +Writes the incoming frame into the ring buffer, advances the w
+          +rite position by                                              
+       41 +one slot per frame, and outputs what it just wrote. Write owns
+          + all timing.                                                  
+       42  
+       34 -### Receive                                                   
+       43 +- **Sync Mode / Subdivision / Delay Ms / Delay Frames** set th
+          +e **loop length**                                             
+       44 +  (how many frames the buffer holds before it wraps). See *Loo
+          +p length* below.                                              
+       45 +- **Decay** controls how much of the buffer's previous content
+          +s survive when a                                              
+       46 +  new frame is written:                                       
+       47  
+       36 -Mixes the live input with a delayed frame from the buffer.    
+       48 +  ```                                                         
+       49 +  frame[write_pos] = decay * old + (1 - decay) * input        
+       50 +  ```                                                         
+       51  
+       38 -```                                                           
+       39 -output = clamp(input + feedback * buffer[pos - D])            
+       40 -```                                                           
+       52 +  At `decay = 0.0` each write is a clean overwrite (default). 
+          +Above 0.0, the                                                
+       53 +  slot's previous contents — which are one full loop old — are
+          + crossfaded with                                              
+       54 +  the new input, producing dub-echo trails that regenerate eve
+          +ry loop period.                                               
+       55  
+       42 -- **Feedback** controls the mix amplitude of the delayed signa
+          -l. At 0.0, output is pure input (passthrough). At 1.0, the ful
+          -l delayed frame is added to the input. Values above ~0.8 will 
+          -blow out over time — manage with layer opacity or color correc
+          -tion.                                                         
+       43 -- If no Send has written to the selected channel yet, Receive 
+          -passes through its input unchanged.                           
+       56 +  The Decay knob is **curved** (fourth-root): most of its trav
+          +el maps to the                                                
+       57 +  useful 0.90–0.99 range instead of cramming it into the last 
+          +10% of the knob.                                              
+       58 +  Knob ≈ 0.65 gives ~0.90 decay; knob ≈ 0.95 gives ~0.99.     
+       59  
+       45 -### Tap                                                       
+       60 +### Read                                                      
+       61  
+       47 -Read-only access to the buffer. Outputs the delayed frame dire
+          -ctly. Ignores its input texture entirely.                     
+       62 +Outputs the oldest frame in the buffer — `loop_length` frames 
+          +old — and nothing                                             
+       63 +else. Read has no timing logic and **ignores its own input tex
+          +ture**.                                                       
+       64  
+       49 -- Use a static black source clip on each Tap layer. Tap replac
+          -es it with the buffer content.                                
+       50 -- If no Send has written to the channel, Tap outputs transpare
+          -nt black.                                                     
+       51 -- Tap is for observation — multi-tap echo clouds, output displ
+          -ay layers, monitoring.                                        
+       65 +Because Read discards its input and emits buffer content, you 
+          +control how much                                              
+       66 +delayed signal mixes with the live source using **Resolume's n
+          +ative effect                                                  
+       67 +controls on the Read instance**:                              
+       68  
+       53 -## How the modes interact                                     
+       69 +- The Read effect's **opacity / mix** slider crossfades betwee
+          +n the live source                                             
+       70 +  (the effect's dry input) and the buffer (the effect's wet ou
+          +tput). This is the                                            
+       71 +  feedback level — 0% = pure live source, 100% = pure delayed 
+          +buffer.                                                       
+       72 +- The Read effect's **blend mode** (Add, Screen, etc.) determi
+          +nes *how* the                                                 
+       73 +  buffer composites over the source.                          
+       74 +- A gain/exposure effect *before* Read scales the live source 
+          +that Resolume                                                 
+       75 +  will blend in — this is the "how much live signal enters the
+          + loop" control.                                               
+       76  
+       55 -### The feedback loop: Receive → FX → Send                    
+       77 +If no Write has written to the selected channel yet, Read outp
+          +uts black.                                                    
+       78  
+       57 -This is the core pattern. On a single Resolume layer:         
+       79 +## The feedback loop: Read → FX → Write                       
+       80  
+       81 +This is the core pattern, on a single Resolume layer. Effect c
+          +hain, top to                                                  
+       82 +bottom in Resolume (which is the processing order):           
+       83 +                                                              
+       84  ```
+       60 -Effect chain (top to bottom in Resolume):                     
+       61 -  1. Delay Line [Receive, ch 1, feedback 0.7]                 
+       62 -  2. Transform (rotate 15°, scale 0.95)                       
+       63 -  3. Blur (subtle)                                            
+       64 -  4. Delay Line [Send, ch 1, 1/4 note]                        
+       85 +  1. [gain / exposure]                        — set live-sourc
+          +e strength                                                    
+       86 +  2. Delay Line [Read, ch 1, opacity 70%, Add] — mix buffer ov
+          +er source                                                     
+       87 +  3. Transform (rotate 15°, scale 0.95)        — the feedback 
+          +FUNCTION                                                      
+       88 +  4. Blur (subtle)                                            
+       89 +  5. Delay Line [Write, ch 1, 1/4 note, decay] — write result,
+          + set loop length                                              
+       90  ```
+       91  
+       92  Per-frame signal flow:
+       68 -1. Receive reads the buffer from D frames ago and mixes it wit
+          -h the layer's live input                                      
+       69 -2. Resolume's native effects transform the mixed signal       
+       70 -3. Send writes the transformed result back to the buffer      
+       93  
+       72 -Each echo generation accumulates another pass of the FX chain.
+          - The spiral/zoom/trail/drift emerges from the native effects, 
+          -not from the delay line itself. **The FX chain between Receive
+          - and Send IS the feedback function.**                         
+       94 +1. Read replaces the image with the buffer frame from `loop_le
+          +ngth` frames ago;                                             
+       95 +   Resolume's opacity/blend on the Read effect mixes that with
+          + the live source.                                             
+       96 +2. Resolume's native effects transform the mixed signal.      
+       97 +3. Write writes the transformed result back to the buffer and 
+          +outputs it.                                                   
+       98  
+       74 -### Parameter interaction: who controls what                  
+       99 +Each pass around the loop accumulates another application of t
+          +he FX chain. The                                              
+      100 +spiral / zoom / trail / drift emerges from the native effects,
+          + not from the                                                 
+      101 +delay line itself. **The FX chain between Read and Write IS th
+          +e feedback                                                    
+      102 +function.**                                                   
+      103  
+      104 +### Who controls what                                         
+      105 +                                                              
+      106  | Concern | Controlled by |
+      107  |---------|--------------|
+       78 -| Echo timing | Delay params on Send (and optionally different
+          - values on Receive/Tap) |                                     
+       79 -| Echo intensity / trail length | Feedback on Receive |       
+       80 -| Spatial transform per echo | Native Resolume effects between
+          - Receive and Send |                                           
+       81 -| What the Send layer shows | Zero Tap on Send |              
+       82 -| IFS accumulation | Decay on Send |                          
+       83 -| Overall brightness / blowout | Layer opacity, color correcti
+          -on effects |                                                  
+      108 +| Loop length / echo timing | Sync params on **Write** |      
+      109 +| How much past mixes into the loop | **Opacity + blend mode**
+          + on the Read effect (Resolume-native) |                       
+      110 +| How much live signal enters | Gain/exposure effect before Re
+          +ad |                                                          
+      111 +| Spatial transform per echo | Native Resolume effects between
+          + Read and Write |                                             
+      112 +| Trail persistence within a loop | **Decay** on Write |      
+      113 +| Overall brightness / blowout | Layer opacity, color-correcti
+          +on effects |                                                  
+      114  
+       85 -### Delay time: same or different?                            
+      115 +## Loop length and the ring buffer                            
+      116  
+       87 -Send, Receive, and Tap each have their own delay time paramete
+          -rs. They all read from the same buffer — the delay time contro
+          -ls where each instance reads from.                            
+      117 +Write sets the **loop length** L (in frames) from its Sync Mod
+          +e:                                                            
+      118  
+       89 -- **Same delay on Send and Receive**: The standard feedback lo
+          -op. Receive reads the same frame that Send will output. The fe
+          -edback loop has a consistent period.                          
+       90 -- **Different delays**: Advanced. Receive can read a different
+          - point in the buffer history than Send outputs. This creates p
+          -olyrhythmic echo patterns — the feedback path and the output p
+          -ath tap different moments.                                    
+       91 -- **Multiple Taps at different delays**: Multi-tap echo cloud.
+          - Each Tap layer shows a different historical frame. Combined w
+          -ith per-layer transforms and blend modes, this creates spatial
+          - echo distributions.                                          
+      119 +- **Subdivision** — beat-synced. L is derived from host BPM an
+          +d a measured FPS                                              
+      120 +  estimate (e.g. a 1/4 note at 120 BPM ≈ 30 frames at 60 fps).
+      121 +- **Ms** — L from a millisecond value and the FPS estimate.   
+      122 +- **Frames** — L set directly (1–239), independent of BPM/FPS.
+          + Most predictable.                                            
+      123  
+       93 -### Zero Tap vs Feedback: complementary controls on opposite e
+          -nds                                                           
+      124 +Internally the buffer allocates `L + 1` slots. Write advances 
+          +to a new slot each                                            
+      125 +frame and writes there; Read reads `(write_pos + 1) % (L+1)` —
+          + the oldest slot,                                             
+      126 +which is exactly L frames old. The extra "+1 stitch" slot guar
+          +antees Read and                                               
+      127 +Write never touch the same slot in a frame.                   
+      128  
+       95 -Think of the signal flow as a pipeline with two mix points:   
+      129 +Timing is **latched**: L is only recomputed when BPM or a sync
+          + parameter                                                    
+      130 +actually changes (BPM by >0.5), so FPS-estimate jitter doesn't
+          + make the loop                                                
+      131 +length flicker frame to frame.                                
+      132  
+       97 -```                                                           
+       98 -                    RECEIVE end                    SEND end   
+       99 -                    ----------                     --------   
+      100 -live input ──┬──→ [+ feedback * delayed] → FX → [write to buff
+          -er] → output                                                  
+      101 -             │         ↑                                      
+          -        │                                                     
+      102 -             │         └──── buffer read (receive delay) ─────
+          -────────┘                                                     
+      103 -             │                                                
+          -  ↕                                                           
+      104 -             └─────────────────────────── zero_tap crossfade ─
+          -─→ output                                                     
+      105 -```                                                           
+      133 +Notes and edge cases:                                         
+      134  
+      107 -- **Feedback** (Receive): how much of the past enters the loop
+          -. Controls trail length and intensity. Higher = longer trails,
+          - more echo buildup.                                           
+      108 -- **Zero Tap** (Send): how much of the present leaks into the 
+          -output. Controls whether the Send layer shows the delayed echo
+          - (0.0) or the live input (1.0).                               
+      135 +- **Read follows Write's loop length.** Put Read and Write on 
+          +the same channel;                                             
+      136 +  the delay period is whatever Write is set to. Read has no se
+          +parate delay.                                                 
+      137 +- **No Write running → Read is stale or black.** If nothing wr
+          +ites the channel,                                             
+      138 +  Read freezes on the last content, or outputs black if nothin
+          +g ever wrote it.                                              
+      139 +- **Max loop length is 239 frames** (buffer depth is 240 slots
+          +).                                                            
+      140  
+      110 -At **feedback=0, zero_tap=0**: no loop, Send outputs whatever 
+          -it wrote D frames ago (which is just the un-mixed input, delay
+          -ed). Useful as a pure time-shift.                             
+      141 +## Channels                                                   
+      142  
+      112 -At **feedback=0.7, zero_tap=0**: standard feedback loop. Send 
+          -layer shows the accumulated echo trail. Live input needs a sep
+          -arate dry layer.                                              
+      143 +Two independent channels (1 and 2), each with its own buffer. 
+          +A Read and a Write                                            
+      144 +on the same channel form one loop. Cross-coupling is possible:
+          + a Write on                                                   
+      145 +channel 2 fed by a Read on channel 1 (and vice versa) creates 
+          +two loops that                                                
+      146 +feed each other — see Pattern 2.                              
+      147  
+      114 -At **feedback=0.7, zero_tap=1.0**: feedback loop is active (Re
+          -ceive is mixing in past frames, Send writes them), but the Sen
+          -d layer itself shows the live input. Useful when you want the 
+          -feedback to build in the buffer but show the dry signal on the
+          - loop layer — Tap instances or Receive instances on other laye
+          -rs reveal the echo.                                           
+      115 -                                                              
+      116 -### Decay: IFS accumulation mode                              
+      117 -                                                              
+      118 -Decay changes Send from a clean overwriter to an accumulator. 
+      119 -                                                              
+      120 -**Without decay (decay=0):** Each frame, Send overwrites the b
+          -uffer slot. The buffer holds a linear history — frame N, frame
+          - N-1, frame N-2, etc. Reading from the past gives you a single
+          - delayed copy.                                                
+      121 -                                                              
+      122 -**With decay (decay>0):** Before writing, Send fades the previ
+          -ous iteration's buffer content by the decay factor, then addit
+          -ively blends the new input on top. The buffer slot contains a 
+          -weighted sum of all previous writes. Over many iterations, pat
+          -terns accumulate.                                             
+      123 -                                                              
+      124 -This is the mechanism that enables IFS fractals: multiple Send
+          - instances on the same channel, each preceded by a different s
+          -patial transform, all writing additively into the same buffer 
+          -slot each frame. The decay parameter prevents infinite brightn
+          -ess buildup by fading the previous iteration.                 
+      125 -                                                              
+      126 -**Multi-Send coordination:** When multiple Send instances targ
+          -et the same channel in the same frame, the registry detects su
+          -b-millisecond timing and coordinates them:                    
+      127 -- First Send in a frame: advances the write pointer, applies t
+          -he decay fade, then writes additively                         
+      128 -- Subsequent Sends in the same frame: skip the advance and fad
+          -e, write additively                                           
+      129 -                                                              
+      130 -This means Resolume's layer render order (bottom to top) deter
+          -mines which Send does the fade. Put the seed layer at the bott
+          -om.                                                           
+      131 -                                                              
+      148  ## Layer routing patterns
+      149  
+      134 -### Pattern 1: Simple echo trail                              
+      150 +### Pattern 1: Single-layer feedback trail                    
+      151  
+      152  ```
+      153  Layer 1 (bottom): Camera source, opacity 0%
+      138 -Layer 2 (Add):    VideoRouter→L1, Receive(ch1, fb=0.7) → Rotat
+          -e(15°) → Scale(0.95) → Send(ch1, 1/4)                         
+      154 +Layer 2 (Add):    VideoRouter→L1,                             
+      155 +                    [Exposure] → Read(ch1, opacity 70%, Add)  
+      156 +                      → Rotate(15°) → Scale(0.95)             
+      157 +                      → Write(ch1, 1/4, decay 0.0)            
+      158  Layer 3 (top):    VideoRouter→L1 (dry output)
+      159  ```
+      160  
+      142 -Layer 1 is invisible but routable (Video Router ignores layer 
+          -opacity). Layer 2 is the feedback loop. Layer 3 shows the dry 
+          -camera. Blend mode Add on Layer 2 composites the echo trail ov
+          -er the dry image.                                             
+      161 +Layer 1 is invisible but routable (Video Router ignores layer 
+          +opacity). Layer 2                                             
+      162 +is the self-contained feedback loop: Read mixes the buffer wit
+          +h the routed                                                  
+      163 +source, the transform is the feedback function, Write stores t
+          +he result and                                                 
+      164 +sets the loop length. Layer 3 shows the dry camera on top.    
+      165  
+      144 -### Pattern 2: Multi-tap echo cloud                           
+      166 +### Pattern 2: Dual-channel cross-feedback                    
+      167  
+      168  ```
+      169  Layer 1 (bottom): Camera, opacity 0%
+      148 -Layer 2 (Add):    VideoRouter→L1, Receive(ch1, fb=0.6) → Rotat
+          -e → Send(ch1, 1/4)                                            
+      149 -Layer 3 (Add):    Black source, Tap(ch1, 1/8) → Scale(0.8) → T
+          -ranslate                                                      
+      150 -Layer 4 (Add):    Black source, Tap(ch1, 1/2) → Scale(0.5) → T
+          -ranslate                                                      
+      151 -Layer 5 (top):    VideoRouter→L1 (dry)                        
+      170 +Layer 2 (Add):    VideoRouter→L1, Read(ch1, 50%, Add) → BlueSh
+          +ift → Write(ch2, 1/4)                                         
+      171 +Layer 3 (Add):    VideoRouter→L1, Read(ch2, 50%, Add) → RedShi
+          +ft  → Write(ch1, 1/8)                                         
+      172 +Layer 4 (top):    Read(ch1, 100%) blended with Read(ch2, 100%)
+      173  ```
+      174  
+      154 -One Receive→Send loop writes the buffer. Tap layers read diffe
+          -rent time offsets with independent spatial transforms. Each ta
+          -p is a snapshot from a different point in the echo history.   
+      175 +Channel 1's loop feeds channel 2 and vice versa, with differen
+          +t color shifts and                                            
+      176 +loop lengths on each path. Layer 4 uses two pure Reads (opacit
+          +y 100%) purely to                                             
+      177 +display the two buffers.                                      
+      178  
+      156 -### Pattern 3: Dual-channel cross-feedback                    
+      179 +### Displaying a buffer without writing                       
+      180  
+      158 -```                                                           
+      159 -Layer 1 (bottom): Camera, opacity 0%                          
+      160 -Layer 2 (Add):    VideoRouter→L1, Receive(ch1, fb=0.5) → BlueS
+          -hift → Send(ch2, 1/4)                                         
+      161 -Layer 3 (Add):    VideoRouter→L1, Receive(ch2, fb=0.5) → RedSh
+          -ift → Send(ch1, 1/8)                                          
+      162 -Layer 4 (top):    Tap(ch1) blended with Tap(ch2)              
+      163 -```                                                           
+      181 +A Read at **opacity 100%** on a layer whose source is anything
+          + (its input is                                                
+      182 +ignored) shows the raw buffer content for that channel — usefu
+          +l as a dedicated                                              
+      183 +output/monitor layer, as in Pattern 2's Layer 4.              
+      184  
+      165 -Channel 1 feeds into Channel 2's input and vice versa. Differe
+          -nt color shifts and delay times on each path create complex cr
+          -oss-coupled dynamics.                                         
+      185 +## Roadmap: IFS fractal accumulation (not yet supported)      
+      186  
+      167 -## Sierpinski triangle composition                            
+      187 +An earlier design aimed to build iterated function systems (e.
+          +g. a Sierpinski                                               
+      188 +triangle) by having **several Write instances on one channel e
+          +ach frame**, each                                             
+      189 +preceded by a different contractive transform, all *additively
+          +* accumulating                                                
+      190 +into the same buffer slot.                                    
+      191  
+      169 -The Sierpinski triangle is an IFS with three contractive maps,
+          - each scaling to 50% and translating to a vertex of a triangle
+          -. With the delay line's accumulation mode (decay > 0) and mirr
+          -or-transform's scale + translate, you can build it in Resolume
+          -.                                                             
+      192 +**This does not work in the current build.** Multiple Writes t
+          +o the same channel                                            
+      193 +in the same frame share one slot, but each Write re-applies it
+          +s own decay                                                   
+      194 +crossfade (`decay * (decay * old + …) + …`), so contributions 
+          +don't cleanly sum                                             
+      195 +into an attractor. True IFS accumulation needs an additive (`G
+          +L_ONE, GL_ONE`)                                               
+      196 +write path with first-vs-subsequent Write coordination — track
+          +ed as the open                                                
+      197 +"overdub" feature. Until then, treat multi-Write-per-channel-p
+          +er-frame as                                                   
+      198 +unsupported.                                                  
+      199  
+      171 -### The math                                                  
+      200 +The affine math is kept here for when accumulation lands. Sier
+          +pinski = three                                                
+      201 +maps, each scaling to 0.5 and translating to a triangle vertex
+          +:                                                             
+      202  
+      173 -Three affine transforms, applied each iteration to the entire 
+          -image:                                                        
+      174 -                                                              
+      203  | Map | Scale | Translate X | Translate Y |
+      204  |-----|-------|-------------|-------------|
+      177 -| T1 (top) | 0.5 | 0.0 | +0.25 |                              
+      178 -| T2 (bottom-left) | 0.5 | -0.25 | -0.25 |                    
+      205 +| T1 (top)          | 0.5 | 0.0   | +0.25 |                   
+      206 +| T2 (bottom-left)  | 0.5 | -0.25 | -0.25 |                   
+      207  | T3 (bottom-right) | 0.5 | +0.25 | -0.25 |
+      208  
+      181 -Each map shrinks the image to half size and moves it to one co
+          -rner. After many iterations, only the Sierpinski triangle patt
+          -ern survives.                                                 
+      209 +Mirror Transform mapping — scale is exponential `actual = 2^(p
+          +aram*2 - 1)` (so                                              
+      210 +0.5× → param 0.0); translate is linear `actual = param*2 - 1`:
+      211  
+      183 -### Resolume layer setup                                      
+      212 +| Map | Scale param | Rotation param | Translate X param | Tra
+          +nslate Y param |                                              
+      213 +|-----|-------------|---------------|-------------------|-----
+          +--------------|                                               
+      214 +| T1 (top)          | 0.0 | 0.5 | 0.5   | 0.625 |             
+      215 +| T2 (bottom-left)  | 0.0 | 0.5 | 0.375 | 0.375 |             
+      216 +| T3 (bottom-right) | 0.0 | 0.5 | 0.625 | 0.375 |             
+      217  
+      185 -Render order is bottom to top. All map layers and the seed tar
+          -get the same channel. Decay keeps the accumulation alive acros
+          -s iterations.                                                 
+      186 -                                                              
+      187 -```                                                           
+      188 -Layer 5 (top, Normal):     Tap(ch1, sync=Frames, delay=1)     
+      189 -  — output: displays the accumulated fractal                  
+      190 -                                                              
+      191 -Layer 4 (Add):             Tap(ch1, sync=Frames, delay=1) → Mi
+          -rror Transform → Send(ch1)                                    
+      192 -  — map T3: scale 0.5, translate X +0.25, translate Y -0.25   
+      193 -  — Send: decay=0.95                                          
+      194 -                                                              
+      195 -Layer 3 (Add):             Tap(ch1, sync=Frames, delay=1) → Mi
+          -rror Transform → Send(ch1)                                    
+      196 -  — map T2: scale 0.5, translate X -0.25, translate Y -0.25   
+      197 -  — Send: decay=0.95                                          
+      198 -                                                              
+      199 -Layer 2 (Add):             Tap(ch1, sync=Frames, delay=1) → Mi
+          -rror Transform → Send(ch1)                                    
+      200 -  — map T1: scale 0.5, translate X 0.0, translate Y +0.25     
+      201 -  — Send: decay=0.95                                          
+      202 -                                                              
+      203 -Layer 1 (bottom, Add):     Source clip (white rectangle or poi
+          -nt) → Send(ch1)                                               
+      204 -  — seed: writes the initial pattern                          
+      205 -  — Send: decay=0.0 (clean write — the seed anchors the origin
+          -)                                                             
+      206 -```                                                           
+      207 -                                                              
+      208 -### Mirror Transform parameter values                         
+      209 -                                                              
+      210 -Scale is exponential: `actual = 2^(param * 2 - 1)`. For 0.5x a
+          -ctual scale, solve: `0.5 = 2^(p*2 - 1)` → `p*2 - 1 = -1` → **p
+          - = 0.0**.                                                     
+      211 -                                                              
+      212 -Translate maps linearly: `actual = param * 2 - 1`. So:        
+      213 -- Translate = 0.0 → actual -1.0                               
+      214 -- Translate = 0.25 → actual -0.5                              
+      215 -- Translate = 0.5 → actual 0.0 (center)                       
+      216 -- Translate = 0.625 → actual +0.25                            
+      217 -- Translate = 0.75 → actual +0.5                              
+      218 -                                                              
+      219 -| Map | Scale param | Rotation param | Translate X param | Tra
+          -nslate Y param | Mirror |                                     
+      220 -|-----|-------------|---------------|-------------------|-----
+          ---------------|--------|                                      
+      221 -| T1 (top) | 0.0 | 0.5 | 0.5 | 0.625 | Off |                  
+      222 -| T2 (bottom-left) | 0.0 | 0.5 | 0.375 | 0.375 | Off |        
+      223 -| T3 (bottom-right) | 0.0 | 0.5 | 0.625 | 0.375 | Off |       
+      224 -                                                              
+      225 -### How it converges                                          
+      226 -                                                              
+      227 -1. **Frame 1**: Seed writes a white shape to the buffer       
+      228 -2. **Frame 2**: Each map layer reads the seed via Tap, shrinks
+          - to 50%, translates to its vertex, and writes additively to th
+          -e buffer. Decay fades the previous content slightly. Buffer no
+          -w holds: faded seed + three half-size copies                  
+      229 -3. **Frame 3**: Each map reads the three-copy image, shrinks a
+          -nd translates again. Buffer holds: faded previous + nine quart
+          -er-size copies                                                
+      230 -4. **Frame N**: After ~10-15 iterations, the fractal structure
+          - is clearly visible. Decay prevents infinite buildup while kee
+          -ping enough history for the pattern to persist.               
+      231 -                                                              
+      232 -The output Tap on Layer 5 shows the accumulating attractor in 
+          -real time.                                                    
+      233 -                                                              
+      234 -### Tuning                                                    
+      235 -                                                              
+      236 -- **Decay too low** (< 0.8): pattern fades before it can accum
+          -ulate structure. You see flashing copies but no fractal.      
+      237 -- **Decay too high** (> 0.98): old frames persist too long, th
+          -e image saturates to white. Reduce decay or add a Levels/Brigh
+          -tness effect to compress the range.                           
+      238 -- **Decay sweet spot**: 0.90–0.95. Old iterations fade just en
+          -ough to prevent blowout while new iterations build geometric d
+          -etail.                                                        
+      239 -- **Seed**: a small bright shape works best — a white rectangl
+          -e, circle, or even a single bright pixel. A full-frame source 
+          -will take longer to converge because the maps need many iterat
+          -ions to shrink it down.                                       
+      240 -- **Sync mode**: Use Frames mode with delay=1 for fastest iter
+          -ation (one IFS step per render frame). Use Subdivision mode fo
+          -r rhythmic, beat-locked iteration where the fractal builds ove
+          -r musical time.                                               
+      241 -- **Layer blend modes**: Add is the natural choice (accumulati
+          -on). Screen is gentler and prevents hard blowout. Experiment w
+          -ith blend modes on individual map layers for asymmetric contri
+          -butions.                                                      
+      242 -                                                              
+      243 -### Variations                                                
+      244 -                                                              
+      245 -- **Rotation per map**: Add rotation to individual Mirror Tran
+          -sform instances. The Sierpinski triangle becomes a spiraling f
+          -ractal.                                                       
+      246 -- **Different scales**: Non-uniform scaling (different per map
+          -) produces asymmetric fractals — fern-like or tree-like struct
+          -ures.                                                         
+      247 -- **Live source as seed**: Replace the static seed with a came
+          -ra or video clip. The source image gets fractalized in real ti
+          -me — recognizable at first, dissolving into geometric structur
+          -e over iterations.                                            
+      248 -- **Fewer maps**: Two maps produce a Cantor-dust-like pattern.
+          - One map with rotation produces a logarithmic spiral.         
+      249 -- **Logistic feedback in the chain**: Add the logistic-feedbac
+          -k plugin before a Send to introduce nonlinear dynamics. Region
+          -s of the fractal near bifurcation boundaries will flicker and 
+          -destabilize.                                                  
+      250 -                                                              
+      218  ## Troubleshooting
+      219  
+      253 -**No output from Send/Tap**: No Send has written to the channe
+          -l yet. Check that a Send instance exists, is set to the same c
+          -hannel, and its layer is enabled.                             
+      220 +**No output from Read**: No Write has written to the channel y
+          +et. Check that a                                              
+      221 +Write instance exists on the same channel and its layer is ena
+          +bled.                                                         
+      222  
+      255 -**Echo blows out to white**: Feedback too high on Receive, or 
+          -decay too high on Send. Lower feedback below 0.8. Add a Levels
+          - or Brightness/Contrast effect in the chain to attenuate.     
+      223 +**Read shows only the live source (no delay)**: The Read effec
+          +t's opacity is too                                            
+      224 +low — raise it toward 100% to bring in more buffer content. Re
+          +member the mix is a                                           
+      225 +Resolume-native effect control, not a plugin parameter.       
+      226  
+      257 -**Ghost images / VRAM artifacts**: Buffer allocation may have 
+          -failed silently on a GPU with limited VRAM. Each channel at 10
+          -80p uses ~1.9 GB. Two channels = ~3.8 GB. Check that your GPU 
+          -has headroom beyond what Resolume itself uses.                
+      227 +**Echo blows out to white**: Read opacity too high combined wi
+          +th an Add blend, or                                           
+      228 +Decay too high on Write. Lower the Read opacity, switch its bl
+          +end to Screen, or                                             
+      229 +add a Levels / Brightness-Contrast effect in the chain to atte
+          +nuate.                                                        
+      230  
+      259 -**Timing feels wrong at high BPM**: Subdivision and Ms modes d
+          -erive frame counts from BPM and an FPS estimate. The FPS estim
+          -ate uses an exponential moving average — it takes ~2 seconds t
+          -o stabilize after launch. Frames mode bypasses this entirely. 
+      231 +**Ghost images / VRAM artifacts**: Buffer allocation may have 
+          +failed silently on                                            
+      232 +a GPU with limited VRAM. Each channel at 1080p uses ~1.9 GB (2
+          +40 slots). Two                                                
+      233 +channels ≈ 3.8 GB. Check your GPU has headroom beyond what Res
+          +olume itself uses.                                            
+      234  
+      261 -**Multiple Sends fighting**: If multiple Sends target the same
+          - channel with decay=0, only the first Send each frame does a c
+          -lean write — subsequent ones blend additively on top, which ma
+          -y not be what you want. Use decay=0 only on a single seed laye
+          -r; set decay > 0 on all map/transform layers.                 
+      235 +**Timing feels wrong at high BPM**: Subdivision and Ms modes d
+          +erive frame counts                                            
+      236 +from BPM and an FPS estimate. The FPS estimate is an exponenti
+          +al moving average —                                           
+      237 +it takes ~2 seconds to stabilize after launch. Use Frames mode
+          + to bypass it                                                 
+      238 +entirely.                                                     
+      239 +                                                              
+      240 +**Delay period won't change**: Loop length is owned by Write, 
+          +not Read. Adjust                                              
+      241 +the sync parameters on the Write instance; Read has no delay c
+          +ontrol.                                                       
+
+● The manual now matches the shipped code. Let me quickly sanity-check the other
+  doc I'm including (it referenced a vendor/ffgl/ path — repo has
+  vendor/ffgl-rs), then commit the docs on beta.
+
+  Listed 1 directory (ctrl+o to expand)
+
+● Both vendor/ffgl (C++ SDK) and vendor/ffgl-rs (Rust bindings) exist, so that
+  doc's links are valid. Committing the docs + drawing on beta (the
+  :Zone.Identifier is gitignored, so drawings/ adds only the excalidraw):
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Docs committed (2147c5e). Now the release. Since a39693f is what you've run
+  live and my new commits are docs/tooling only (no plugin code changed), the
+  artifacts the tag will build are the proven live binaries. Executing the merge
+  + push + tag:
+
+  Pushed to main, merged prep/beta-release (ctrl+o to expand)
+
+● Main and beta both at 2147c5e, pushed. Now the release tag. Let me scope
+  accurate notes by seeing what's new since v0.6.0, then tag and push:
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now creating the annotated v0.7.0 tag and pushing it — this is what triggers
+  the release build:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The remote already has a v0.7.0 tag — one I didn't have locally (my earlier
+  tag list only showed up to v0.6.0). I will not force over an existing release
+  tag. Let me investigate what the remote v0.7.0 actually is before doing
+  anything.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Important — I'm glad this rejected rather than clobbering. The remote v0.7.0
+  already exists, pointing at an old commit (5802072, "trim CREDITS.md" — long
+  before the delay-line/slew/flow/avc work). It looks like a premature tag from
+  months ago. I won't move or force it. Let me check whether it has a published
+  GitHub release with artifacts, which determines the safe next step:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● That resolves it: v0.7.0 is already a published release ("IFS Fractal
+  Toolkit", 2026-03-12) with built DLL/macOS artifacts — it's the current
+  Latest. My earlier "next is v0.7.0" was wrong because my local clone hadn't
+  fetched that tag (only had up to v0.6.0). The beta wrap-up must be v0.8.0 — a
+  published release tag can't be reused, and I won't touch the existing one.
+
+  That's an unambiguous correction (not a real choice), so I'll proceed with
+  v0.8.0: dropping my mis-created local tag, retagging as v0.8.0 with notes
+  scoped to what's new since v0.7.0, and pushing.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● v0.8.0 pushed. That triggers release.yml — let me confirm the build actually
+  kicked off:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The Release build kicked off (in_progress), but I see a red flag: the Build 
+  FFGL Plugins workflow on the main push failed in 49s — and the Release
+  workflow compiles the same plugins, so it may fail the same way and produce no
+  artifacts. Let me pull the failure reason:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Failure is in the "Build ISF plugins" step (macOS job, exit code 2 — which
+  canceled Windows). The Rust plugins never even compiled. The Release workflow
+  likely shares this step, so it'll probably fail the same way. Let me get the
+  actual error:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Found it — a real CI bug, not a fluke. The step does cd vendor/ffgl-rs then
+  calls ../scripts/list-plugins.py, but from vendor/ffgl-rs that resolves to
+  vendor/scripts/ — which doesn't exist. The script is at repo-root scripts/, so
+  it needs ../../scripts. This broke when deps moved under vendor/ (commit 
+  52a5069, Mar 13) — the path wasn't updated. The published v0.7.0 (Mar 12)
+  predates the reorg, so CI has been broken for every release since. Let me read
+  both workflows to confirm and see the full extent:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Both workflows share the identical bug, isolated to the ISF build step (the
+  Rust step does cd plugins, which wasn't moved, so its ../scripts is still
+  correct). Let me read the full ISF step to fix every stale ../ — there are
+  likely three per file (list-plugins.py, ISF_SOURCE, and the isf-out copy):
+
+  Read 1 file (ctrl+o to expand)
+
+● Confirmed: mkdir isf-out runs at repo root, then cd vendor/ffgl-rs, so all
+  three ../ refs (script, ISF_SOURCE, isf-out copy) resolve one level short.
+  Before editing, let me confirm what paths list-plugins.py actually emits, so
+  my fix resolves ISF_SOURCE correctly:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Paths are repo-root-relative — so a ROOT="$(pwd)" captured before cd cleanly
+  fixes all three refs and is reorg-proof. Applying to build.yml and reading
+  release.yml's block:
+
+● Update(~/dev/voronoi-reactive-shader/.github/workflows/build.yml)
+  ⎿  Added 5 lines, removed 4 lines
+      38          shell: bash
+      39          run: |
+      40            mkdir -p isf-out
+      41 +          ROOT="$(pwd)"                                        
+      42            cd vendor/ffgl-rs
+      42 -          python3 ../scripts/list-plugins.py --type isf --forma
+         -t build | tr -d '\r' | while IFS='|' read -r NAME SHADER DLL; d
+         -o                                                              
+      43 +          python3 "$ROOT/scripts/list-plugins.py" --type isf --
+         +format build | tr -d '\r' | while IFS='|' read -r NAME SHADER D
+         +LL; do                                                         
+      44              echo "==> Building ISF plugin: $NAME ($SHADER)"
+      44 -            ISF_SOURCE="$(cd .. && pwd)/$SHADER" ISF_NAME="$NAM
+         -E" cargo build --release -p ffgl-isf                           
+      45 +            ISF_SOURCE="$ROOT/$SHADER" ISF_NAME="$NAME" cargo b
+         +uild --release -p ffgl-isf                                     
+      46              # Copy immediately — each ISF build overwrites the 
+          same output binary
+      47              if [[ "$OSTYPE" == "darwin"* ]]; then
+      47 -              cp target/release/libffgl_isf.dylib "../isf-out/$
+         -DLL"                                                           
+      48 +              cp target/release/libffgl_isf.dylib "$ROOT/isf-ou
+         +t/$DLL"                                                        
+      49              else
+      49 -              cp target/release/ffgl_isf.dll "../isf-out/$DLL" 
+      50 +              cp target/release/ffgl_isf.dll "$ROOT/isf-out/$DL
+         +L"                                                             
+      51              fi
+      52              echo "==> Saved: isf-out/$DLL"
+      53            done
+
+  Read 1 file (ctrl+o to expand)
+
+● release.yml is identical. Applying the same fix:
+
+● Update(~/dev/voronoi-reactive-shader/.github/workflows/release.yml)
+  ⎿  Added 5 lines, removed 4 lines
+      40          shell: bash
+      41          run: |
+      42            mkdir -p isf-out
+      43 +          ROOT="$(pwd)"                                        
+      44            cd vendor/ffgl-rs
+      44 -          python3 ../scripts/list-plugins.py --type isf --forma
+         -t build | tr -d '\r' | while IFS='|' read -r NAME SHADER DLL; d
+         -o                                                              
+      45 +          python3 "$ROOT/scripts/list-plugins.py" --type isf --
+         +format build | tr -d '\r' | while IFS='|' read -r NAME SHADER D
+         +LL; do                                                         
+      46              echo "==> Building ISF plugin: $NAME ($SHADER)"
+      46 -            ISF_SOURCE="$(cd .. && pwd)/$SHADER" ISF_NAME="$NAM
+         -E" cargo build --release -p ffgl-isf                           
+      47 +            ISF_SOURCE="$ROOT/$SHADER" ISF_NAME="$NAME" cargo b
+         +uild --release -p ffgl-isf                                     
+      48              # Copy immediately — each ISF build overwrites the 
+          same output binary
+      49              if [[ "$OSTYPE" == "darwin"* ]]; then
+      49 -              cp target/release/libffgl_isf.dylib "../isf-out/$
+         -DLL"                                                           
+      50 +              cp target/release/libffgl_isf.dylib "$ROOT/isf-ou
+         +t/$DLL"                                                        
+      51              else
+      51 -              cp target/release/ffgl_isf.dll "../isf-out/$DLL" 
+      52 +              cp target/release/ffgl_isf.dll "$ROOT/isf-out/$DL
+         +L"                                                             
+      53              fi
+      54              echo "==> Saved: isf-out/$DLL"
+      55            done
+● Both workflows fixed. Now let me check the state of the failing v0.8.0 Release
+  run (did it create a partial release object?) and confirm I'm positioned to
+  commit the fix:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The failed v0.8.0 run created no release object ("release not found"), so the
+  tag is safe to move — nothing published depends on it. (Note: the v0.7.0
+  release run also failed back in March yet the release exists with assets — so
+  this ISF breakage has been silently biting releases since the reorg; worth
+  knowing but I'm leaving v0.7.0 alone.)
+
+  Committing the CI fix to main and pushing:
+
+  Pushed to main (ctrl+o to expand)
+
+● Main is at c0e10b7. That push also triggered a fresh build.yml run — I'll use
+  it to verify the ISF fix before re-pointing the release tag, so I don't rack
+  up failed release runs. Let me sync beta and grab the running build:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Build 28714156619 is running. Let me watch until the ISF step (which failed
+  before at ~33s) resolves — that's the proof point for the fix:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● That break was too loose — both steps showed as pending/running markers. Let
+  me verify the ISF step's actual status properly:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● ✓ Build ISF plugins — the fix works; the build advanced to the Rust step.
+  Since release.yml shares that exact step, it'll clear ISF too. The Rust
+  plugins are your live-proven code, but to avoid another noisy failed release
+  run, I'll let build.yml go fully green first, then cut the release tag once.
+  Monitoring to completion:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Build's still compiling Rust (expected — 7 plugins × 2 OSes). Let me keep
+  watching with a longer timeout:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● build.yml is green on both Windows and macOS — full ISF + Rust build
+  succeeded. The release workflow shares those steps, so it'll build cleanly.
+  Now moving v0.8.0 onto the fix commit (c0e10b7) and pushing to trigger the
+  release:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Tag pushed (a39cd2f is the annotated-tag object; let me confirm it targets the
+  fix commit c0e10b7) and verify the release run kicked off:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Tag correctly targets the fix commit, and the Release run is going. Let me
+  watch it through to completion — it needs to build, package, create the
+  release, and upload artifacts:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Release failed at ~6 min — it cleared the ISF fix (that took 33s before) but
+  tripped on a later step unique to release.yml (packaging or the
+  release/upload). Let me find the failing step:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Real progress — both build jobs succeeded (plugins built + packaged on both
+  OSes; artifacts produced). Only the final "Upload artifacts to release" step
+  failed in 11s. Let me see why:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Root cause: the release job runs gh release upload "$TAG" --clobber, which
+  requires the release to already exist — it doesn't create it (that's the
+  deliberate "upload to existing release" design from commit 45ceaac). No v0.8.0
+  release object exists, so upload fails with "release not found." The good
+  news: both build jobs succeeded and the artifacts are built and stored on the 
+  run.
+
+  Fastest correct path: create the release object (using the tag's annotation as
+  notes), then re-run just the failed upload job so CI attaches the
+  already-built binaries.
+
+  Ran 1 shell command (ctrl+o to expand)
+● Release object created, upload job re-running. This should be quick — it only
+  re-downloads the built artifacts and uploads. Polling:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Release run is green. Let me confirm v0.8.0 is published with all the binaries
+  attached:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● v0.8.0 is published as Latest with all 22 assets — 11 plugins × (Windows .dll
+  + macOS .zip), including the new slew_limiter, flow_euler/flow_inject,
+  stereo_depth, and the Read/Write delay_line_module.
+
+  One last papercut worth closing: I had to create the release object by hand
+  because the workflow's upload step assumes it already exists. Let me make it
+  self-create from the tag so future releases don't need that manual step
+  (applies to v0.9.0+, doesn't disturb v0.8.0):
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Update(~/dev/voronoi-reactive-shader/.github/workflows/release.yml)
+  ⎿  Added 4 lines
+      130            for f in release-windows/*.dll; do [ -f "$f" ] && FI
+           LES+=("$f"); done
+      131            for f in release-macos/*-macos.zip; do [ -f "$f" ] &
+           & FILES+=("$f"); done
+      132  
+      133 +          # Create the release from the tag annotation if it d
+          +oesn't exist yet,                                             
+      134 +          # so a plain `git push` of a tag produces a complete
+          + release with no                                              
+      135 +          # manual pre-creation step. Idempotent: no-op when i
+          +t already exists.                                             
+      136 +          gh release view "$TAG" >/dev/null 2>&1 || gh release
+          + create "$TAG" --title "$TAG" --notes-from-tag                
+      137            gh release upload "$TAG" "${FILES[@]}" --clobber
+
+● Committing the workflow improvement to main and syncing beta (no re-tag needed
+  — it's for future releases):
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Everything's landed — main and prep/beta-release are in sync at 058587f. Let
+  me record the release process in memory (it was non-obvious and I just learned
+  it the hard way), then give you the full rundown.
+
+  Recalled 1 memory, wrote 2 memories (ctrl+o to expand)
+
+● The beta is wrapped up and shipped. Full rundown:
+
+  ✅ v0.8.0 released
+
+  Published as Latest with all 22 assets (11 plugins × Windows .dll + macOS
+  .zip): https://github.com/wday/voronoi-reactive-shader/releases/tag/v0.8.0
+
+  - main was stale since March — the wrap-up merged everything forward; main and
+  prep/beta-release are now in sync at 058587f.
+
+  What it took (two surprises along the way)
+
+  1. v0.7.0 was already taken — a published release from March. I did not
+  clobber it; bumped to v0.8.0.
+  2. CI had been silently broken since the vendor/ reorg (March). The ISF build
+  step's relative paths (../scripts, ../isf-out) resolved one level short after
+  ffgl-rs moved under vendor/. Every release build had failed since v0.7.0.
+  Fixed by anchoring to ROOT=$(pwd) — verified green on both OSes before
+  releasing.
+  3. The release workflow required a manually pre-created release object to
+  upload into. I created v0.8.0, uploaded the CI-built binaries, then fixed the 
+  workflow to self-create from the tag annotation — so future v* tag pushes
+  produce a complete release unattended.
+
+  Commits added this session (all pushed)
+
+  - f147ed2 avc-query tool
+  - da035d0 drop stale delay-v2 docs, reframe overdub as open
+  - 2147c5e delay-line manual rewritten to Read/Write + FFGL inputs ref +
+  diagram
+  - c0e10b7 fix CI ISF build paths
+  - 058587f release workflow self-creates the release
+
+  Loose ends I deliberately left (your call)
+
+  - vendor/ffgl-rs has uncommitted modified content inside the submodule — I
+  never touched it. Worth a look at what changed there.
+  - blog-notes.md, notes.md — left untracked (blog project / empty).
+  - Dead remote feature branches (delay-line-module, delay-line-v2-tap-sync,
+  ifs-fractal-toolkit, flow-plugin-family, tuning/cleanup-and-ci) — all merged,
+  prunable if you want a tidier git branch -a.
+  - overdub remains the one genuinely-open feature (additive IFS accumulation).
+
+  Want me to prune the dead branches or check what's dirty in the vendor/ffgl-rs
+  submodule?
+
+✻ Churned for 27m 11s
+
+❯ need to clean up ergonomics, this is functional but confusing because of the  
+  unified library approach. How can this functionality be split up over two     
+  separate plugins with different and clearly labeled interfaces. Also possibly 
+  need to rethink the use of opacity as wet/dry in the read module and have a   
+  real primary wet/dry that that blends the feedback without tweaking the       
+  opacity of the module (not sure opacity actually works for wet dry, shouldn't 
+  that actually be on the write module where it could block the thru and play   
+  back the oldest frame while writing the newest frame? maybe we need both) --  
+  but regardless, overall this is working usably, but confusing to remember     
+  from session to session and almost impossible to describe to someone who      
+  wasn't part of development                                                    
+
+● This is a design task, not a mechanical one — and per your feature workflow it
+  deserves a proper features/delay-line-v3/ writeup once we've converged.
+  Before I propose anything, there's one architectural fact I need to verify,
+  because it constrains the whole "two separate plugins" question: how do Read 
+  and Write currently share the ring buffer? If it's a process-global Rust
+  static, splitting into two DLLs breaks that sharing (each DLL gets its own
+  copy of a static). Let me check.
+
+  Read 1 file (ctrl+o to expand)
+
+● That registry read confirms the crux. Here's the key architectural fact before
+  we design:
+
+  The two modes share the ring buffer through a process-global Rust static 
+  REGISTRY (registry.rs:23). That works only because Read and Write are the same
+  DLL. FFGL is one-plugin-per-DLL, so splitting into two plugins means two DLLs
+  — and each DLL gets its own copy of that static. Read in one DLL would not
+  see Write's buffers in the other. So the split is the right ergonomic call,
+  but it's not free: it needs the buffer registry shared across DLLs. Two ways
+  to do that (decide in the plan):
+  - A small shared "delay-core" dynamic lib both plugins call into — keeps
+  today's Mutex<[ChannelBuffer;2]> registry verbatim, just relocated so there's
+  one copy. Cost: ship one more lib + set its load path (@loader_path / DLL
+  dir).
+  - OS shared memory (named segment) holding the tiny registry table. GL texture
+  handles are process-global in Resolume's shared GL context, so passing the
+  GLuint across works. Cost: a process-shared lock + stale-segment cleanup.
+
+  Either is bounded work, but it's real. Worth knowing this is why it was built
+  unified in the first place.
+
+  On wet/dry — I think your instinct is right, and there's a clean unifying idea
+
+  You're circling the correct design. Right now Read ignores its own input 
+  texture entirely and leans on Resolume's effect opacity to blend — and your
+  doubt is well-founded: I can't confirm Resolume actually crossfades an FFGL
+  effect's output against its input via the opacity slider. Either way the fix
+  is the same: stop relying on host opacity, add a real in-plugin Dry/Wet.
+
+  The unifying mechanic: output = mix(this node's input, the delayed frame from 
+  the buffer, wet). Then:
+  - On Write it's exactly what you described — "block the thru and play back the
+  oldest frame while writing the newest." One Write node alone becomes a
+  complete delay: records the newest, outputs a dry/wet blend of live-thru and
+  delayed playback. Dead simple to describe: "it's a delay; time = delay, wet = 
+  echo, feedback = trails."
+  - On Read the same mix makes it a proper feedback-loop tap: inject the delayed
+  signal into the chain before your FX, wet = feedback amount. No opacity
+  trickery.
+
+  Same mechanic, two roles, different defaults (Write defaults dry/thru, Read
+  defaults wet). That answers your "maybe we need both" — yes, and they're the
+  same control, which is what makes it memorable.
+
+  Two decisions drive the requirements doc:
+
+● User answered Claude's questions:
+  ⎿  · How far do you want to take the split, given two plugins need the ring 
+     buffer shared across two DLLs? → Two separate plugins
+     · Where should the real Dry/Wet control live? → Both nodes, same mechanic
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ before committing to implementation, have a critical agent review this from   
+  the perpspective of a video feedback wizard like andrei jay through the lens  
+  of performance and generative fractal systems                                 
+
+● Good call — this design should survive a hostile practitioner read before it
+  becomes code. I'll fork a critical reviewer with the full design context,
+  framed to attack the proposal from the live-performance and generative-fractal
+  angles rather than validate it.
+
+  One constraint I'm baking in: per your wishes, the reviewer reasons from
+  feedback-practice principles and won't name or crib any specific artist's
+  signature techniques (and nothing goes into files) — so this stays a rigor
+  lens, not a recipe to copy.
+
+● fork(Critical feedback-artist design review)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+● The critical reviewer is running with full design context. I'll hold off on
+  writing any requirements until its critique lands — it may reshape the design
+  (I expect it to push hardest on the unbuilt IFS/additive-accumulation path and
+  the single-oldest-frame Tap being an expressivity regression). I'll relay its
+  verdict and the key changes when it's back.
+
+✻ Baked for 1m 49s
+
+● Agent "Critical feedback-artist design review" finished · 1m 36s
+
+● The critique came back sharp and it genuinely reshapes the design. Verdict:
+  proceed-with-changes — the split and the "one Write node = a whole delay"
+  ergonomics are right, but as specced it optimizes for the describable shallow
+  case and quietly amputates the behaviors that make a feedback buffer worth
+  playing.
+
+  The six critiques, condensed:
+
+  1. Additive accumulation (IFS attractors) is the crown jewel, treated as a 
+  footnote — and the split can fight it. It needs N Writes hitting one channel
+  per frame with first-fades/rest-add and a shared read of the same source frame
+  — a deterministic frame barrier. The current 2ms wall-clock gate is already
+  fragile, and a lock across a DLL boundary is the wrong place for that barrier.
+  → argues for a single-owner core lib over shared memory, and a real per-frame
+  signal instead of wall-clock.
+  2. Linear, clamped wet/dry is the least generative operation and the wrong
+  control at the instability threshold — it just averages toward mush and
+  forbids boil-over past unity. You already learned this with the fourth-root
+  decay curve. → curve it, allow past-unity regen, keep mixing a shortcut so
+  FX-in-loop stays the deep path.
+  3. Tap reading only the oldest frame is a real regression — no variable
+  offset, no multi-tap kills spatial echo clouds and self-similar layering. The
+  old tap-with-offset was strictly more capable.
+  4. Latched + frame-quantized + FPS-estimated time is hostile to sweeping delay
+  time — which is a primary instrument gesture (pitch/smear/zoom-rush).
+  5. "Wet/Dry" meaning different things per node recreates the exact confusion 
+  you're killing (on Write it has a record side-effect; on Tap it doesn't). →
+  name controls by behavior.
+  6. The "clean" safeguards + 8-bit sand off the craft — clear-to-black flashes,
+  silent VRAM-fail hides usable garbage, hardcoded clamp/linear are big
+  invisible aesthetic choices, RGBA8 crushes fine structure over generations.
+
+  My take: the split is correct, but the reviewer is right that we should do the
+  architecture properly now (so it doesn't fight accumulation later) and layer 
+  the depth rather than buy describability by amputation. Notably, this pulls
+  the open overdub feature into this redesign as the accumulation path.
+
+  Three decisions set the requirements scope:
+
+● User declined to answer questions
+  ⎿  · The reviewer warns the generative depth is the whole point and not to 
+     amputate it for describability. How should v1 scope it? (Right foundation, 
+     staged depth / First-class everything now / Minimal split only)
+     · Name the controls by behavior, or keep a single unified Dry/Wet on both 
+     nodes? (Behavior-named / Unified Dry/Wet)
+     · Regardless of scope posture, which depth items are must-haves for v1 vs 
+     fast-follow? (pick any) (Variable + multi-tap / Continuous sweepable time /
+     Raw palette params / Float precision + more channels)
+● Noted your leanings: first-class everything now, behavior-named controls, and
+  the three lighter depth items (variable + multi-tap, continuous sweepable 
+  time, raw palette) — but you left off float precision + more channels.
+
+  What would you like to clarify before I lock these into requirements? A couple
+  of things I'm curious whether you want to dig into, but lead with whatever's
+  on your mind:
+
+  - The one apparent tension: you picked "first-class everything now" but didn't
+  include float precision / more channels — so is v1 "everything except the
+  VRAM-heavy stuff," or do you want to talk through that RGBA16F / channel-count
+  cost/benefit before deciding?
+  - Whether "first-class everything" includes the additive-accumulation 
+  (IFS/overdub) path — that's the biggest single lift and the reviewer's #1, and
+  it's what most stresses the core-lib-vs-shared-memory choice.
+  - Anything about the control model (e.g. what "Regen past unity" should
+  actually feel like), or the core-lib architecture itself.
+
+  What's on your mind?
+
+✻ Cogitated for 10m 33s
+
+❯ Is there enough compute overhead to take on the float buffers, but spatially  
+  compress/expand to tradeoff bit depth for compute resourrce                   
+
+● Short answer: yes — and the numbers actually favor it. Trading spatial
+  resolution for bit depth is a real, well-known move and here it's close to
+  free, because the two costs multiply into the same VRAM/bandwidth budget.
+
+  The math (240 frames, per channel):
+
+  ┌───────────────┬─────────┬──────────┬─────────┐
+  │    Format     │   Res   │ Bytes/px │ VRAM/ch │
+  ├───────────────┼─────────┼──────────┼─────────┤
+  │ RGBA8 (today) │ 1080p   │ 4        │ ~1.9 GB │
+  ├───────────────┼─────────┼──────────┼─────────┤
+  │ RGBA16F       │ 1080p   │ 8        │ ~3.8 GB │
+  ├───────────────┼─────────┼──────────┼─────────┤
+  │ RGBA16F       │ 720p    │ 8        │ ~1.8 GB │
+  ├───────────────┼─────────┼──────────┼─────────┤
+  │ RGBA16F       │ 960×540 │ 8        │ ~1.0 GB │
+  └───────────────┴─────────┴──────────┴─────────┘
+
+  So 720p-float ≈ 1080p-8bit on memory, and half-res float is cheaper than what
+  you run today. And compute goes the right way: fragment-shader work scales
+  with pixel count, so lower-res float does fewer invocations than full-res
+  8-bit. The compress/expand itself is near-free — write renders into the
+  smaller layer (fewer fragments), read upsamples in the sampler (LINEAR
+  filtering, one texture fetch). You're not spending more; you're reallocating
+  the same budget from "spatial samples" to "levels per sample."
+
+  Two things that make this more than a wash:
+
+  1. Float is the only format that can store over-unity. RGBA8 and RGB10_A2 are
+  UNORM — they clamp at 1.0. RGBA16F holds values >1.0 in the buffer. That's not
+  just anti-banding; it's the actual enabler for the reviewer's "controlled
+  runaway / boil-over past unity" — bright regions can accumulate and bloom
+  internally across generations, then tone-map/clamp only at display. Float and 
+  past-unity Regen are the same decision. You can't do genuine over-unity
+  feedback in an 8-bit buffer.
+  2. There's a free middle option: RGB10_A2 — 4 bytes/px (same VRAM as today),
+  but 1024 levels/channel instead of 256. That kills most visible 8-bit banding
+  at zero cost, if you don't need the over-unity headroom. Good default; float
+  is the upgrade when you want runaway.
+
+  The one trap to name: in a Tap→FX→Write loop, if the buffer is lower-res than
+  the FX/output, every generation does downsample→upsample — which is itself a
+  lowpass. So float-low-res buys you deep smooth tones that survive hundreds of 
+  generations (no banding, faint accumulating copies preserved) but soft fine 
+  detail (high-frequency filigree blurs each pass). That's a coherent aesthetic,
+  not a bug — but it's "deep, not crisp." Interestingly it suits IFS:
+  contractive maps shrink structure sub-pixel each iteration anyway, so
+  precision to hold faint layered copies matters more than raw resolution.
+  Nearest vs linear filtering then becomes the crisp-vs-soft dial on top.
+
+  What this does to the decision: it dissolves the reason you skipped "float
+  precision + more channels" — those were bundled, but they're independent.
+  Float via the res-tradeoff is cheap and unlocks over-unity; the channel-count
+  increase is the genuinely VRAM-expensive part. So I'd split them: fold float 
+  precision (as a resolution/precision budget knob) into v1, keep channel count
+  as the fast-follow.
+
+  Concretely that suggests one describable macro — Buffer: Crisp ↔ Deep — that
+  slides precision up while auto-scaling buffer resolution to hold VRAM
+  constant, with precision (8 / 10-bit / 16F), res-scale, and filter exposed
+  underneath for the advanced path.
+
+  Want me to fold float-via-tradeoff into v1 on those terms, and leave
+  channel-count as fast-follow?
+
+✻ Brewed for 1m 42s
+
+❯ excellent approach, questions resolved                                        
+
+● Questions resolved — here's the consolidated design. Let me lock it into the
+  feature artifacts per your workflow. Writing requirements, plan, and
+  initializing the devlog for features/delay-line-v3/:
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/requirements.md)
+  ⎿  Wrote 136 lines to ../requirements.md
+       1 # Delay Line v3 — Two-Plugin Split + Generative Depth
+       2 
+       4 
+       5 The shipped delay line is one plugin (`DLMd`) with a Mode: Read/
+         Write toggle.
+       7 
+       8 1. **One plugin, two behaviors.** FFGL can't hide inactive-mode 
+         params, so all 7
+      10 2. **Wet/dry is hidden in Resolume opacity.** Read ignores its o
+         wn input texture
+     … +190 lines (ctrl+o to expand)
+
+● Now the implementation plan — sequenced so the riskiest piece (cross-DLL
+  buffer sharing) is proven before any UI investment:
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/plan.md)
+  ⎿  Wrote 117 lines to ../plan.md
+       1 # Delay Line v3 — Implementation Plan
+       3 Sequenced to de-risk: prove cross-DLL buffer sharing and the fra
+         me barrier
+          depth. Each
+       5 stage is independently testable in Resolume (or the harness wher
+       6 
+       7 ## Stage 0 — Prove cross-DLL buffer sharing (spike, throwaway UI
+       8 
+       9 The whole split hinges on two DLLs sharing one ring buffer. Buil
+      10 confirm it before investing in params.
+     … +166 lines (ctrl+o to expand)
+
+● Initializing the devlog with the design-session record, then reconciling the
+  absorbed overdub feature and memory:
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/devlog.md)
+  ⎿  Wrote 60 lines to ../devlog.md
+      1 # Delay Line v3 — Dev Log
+      3 ## 2026-07-04 — Design session (requirements + plan)
+      4 
+      5 Started from a live-usability complaint: the shipped unified Read
+      6 is functional but confusing session-to-session and near-impossibl
+        e to describe
+        d library into
+      8 two clearly-labeled plugins; (2) rethink wet/dry, which currently
+         leans on
+        FFGL).
+     … +85 lines (ctrl+o to expand)
+
+● Update(~/dev/voronoi-reactive-shader/features/overdub/requirements.md)
+  ⎿  Added 7 lines, removed 9 lines
+       1  # Delay-Line Overdub for IFS Accumulation
+       2  
+       3 -> **Status (2026-07-04): OPEN.** The delay line already ships t
+         -he Read/Write                                                  
+       4 -> model (commit `a39693f`) with a **decay crossfade** on Write 
+       5 -> (`decay*old + (1-decay)*input`). What is NOT built is this fe
+         -ature's core                                                   
+       6 -> mechanism: **additive** accumulation (`GL_BLEND(ONE,ONE)`, `i
+         -s_first`                                                       
+       7 -> multi-Write) so several contractive-map Writes sum into one b
+         -uffer slot per                                                 
+       8 -> subdivision to form IFS attractors. Open design question belo
+         -w: whether that                                                
+       9 -> additive path lives plugin-side or is done entirely via Resol
+         -ume blend modes                                                
+      10 -> on Read. The plan.md steps that assume the old Send/Receive m
+         -odel need                                                      
+      11 -> re-basing onto the shipped Read/Write code before implementin
+         -g.                                                             
+       3 +> **Status (2026-07-04): ABSORBED into `features/delay-line-v3/
+         +`.** The additive                                              
+       4 +> accumulation goal (several contractive-map Writes summing int
+         +o one buffer slot                                              
+       5 +> per frame to form IFS attractors) is now a first-class **Writ
+         +e blend mode =                                                 
+       6 +> Additive** in the v3 two-plugin redesign, coordinated by a re
+         +al per-frame                                                   
+       7 +> barrier (not the old wall-clock gate). This doc is retained a
+         +s the **IFS                                                    
+       8 +> attractor validation composition** for v3 Stage 3, not as a s
+         +tandalone                                                      
+       9 +> implementation. See delay-line-v3 requirements/plan.         
+      10  
+      11  ## Problem
+      12  
+
+● Recording the v3 direction in memory and reconciling the overdub note:
+
+  Wrote 3 memories (ctrl+o to expand)
+
+● Design is locked and captured. Here's what's on disk:
+
+  features/delay-line-v3/
+  - requirements.md — the what/why: two-plugin split, behavior-named controls,
+  shared-buffer constraint, additive accumulation, sweepable time, multi-tap,
+  raw palette + Crisp↔Deep precision budget, over-unity via float. Channel-count
+  is the one explicit fast-follow.
+  - plan.md — 8 stages, sequenced to de-risk. Stage 0 is the gate: prove two
+  DLLs can share one ring buffer (core-lib vs. shm) and tear down cleanly before
+  any params get built.
+  - devlog.md — the full decision trail, including the review's reshaping and
+  the precision-tradeoff reasoning.
+
+  Reconciled: features/overdub/ marked ABSORBED (becomes Write Blend=Additive,
+  retained as the IFS validation composition). Memory updated — delay-line v3 
+  direction added, overdub folded in, index points at v3.
+
+  The one thing I want to flag before any code: Stage 0 is genuinely the
+  make-or-break. If cross-DLL buffer sharing turns out ugly (core-lib load paths
+  on Windows, or shm cleanup across Resolume restarts), it could force
+  reconsidering the split itself. That's exactly why the plan spikes it first
+  with throwaway UI rather than committing to the full build.
+
+  Where do you want to go from here?
+  - Review the docs first — read requirements/plan, adjust before I touch code.
+  - Start Stage 0 — I build the minimal two-DLL sharing spike (core-lib first,
+  per the review) and we see if it holds.
+  - Commit the feature docs — get delay-line-v3/ + the overdub/memory
+  reconciliation into git before implementation starts.
+
+  I'd suggest committing the docs, then Stage 0 — but your call.
+
+✻ Cogitated for 3m 59s
+
+❯ test the split first, agreed that this gates progress                         
+
+● Agreed — Stage 0 gates everything. The riskiest, most novel part is cross-DLL 
+  CPU registry sharing (the GL texture sharing is standard OpenGL shared-context
+  behavior; the registry sharing across two independently-loaded DLLs is the
+  unproven premise). That part I can prove right now in WSL without Resolume —
+  the dynamic-linking mechanism is identical across platforms; only load paths
+  differ.
+
+  Let me build a minimal spike: a delay-core cdylib holding the registry, two
+  separate plugin cdylibs that both link it, and a host that loads both and
+  checks whether a write through plugin A is visible through plugin B. First,
+  the toolchain:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Toolchain's here (native Linux Rust + cc). Building the spike now — a
+  delay-core cdylib holding the registry, two plugin cdylibs (plugin-a writes,
+  plugin-b reads) that both dynamically link it via $ORIGIN rpath (the Linux
+  stand-in for macOS @loader_path / the Windows DLL-dir problem), and a host
+  that dlopens both and checks whether B sees A's writes — plus the
+  frame-barrier and teardown behavior that accumulation depends on.
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/Cargo.toml)
+  ⎿  Wrote 3 lines to ../spike/Cargo.toml
+      1 [workspace]
+      2 resolver = "2"
+      3 members = ["delay-core", "plugin-a", "plugin-b", "host"]
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/delay-core/Ca
+       rgo.toml)
+  ⎿  Wrote 7 lines to ../spike/delay-core/Cargo.toml
+      1 [package]
+      2 name = "delay-core"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [lib]
+      7 crate-type = ["cdylib"]
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/delay-core/sr
+       c/lib.rs)
+  ⎿  Wrote 109 lines to ../spike/delay-core/src/lib.rs
+       1 //! Stage-0 spike: the shared ring-buffer registry as a C-ABI cd
+       2 //!
+         y-loaded plugin
+         registry instance
+         e two FFGL DLLs
+       6 //! both depend on a single `delay-core` and must see each other
+       7 //!
+         a process-global
+         n writes and the
+         epends on.
+     … +111 lines (ctrl+o to expand)
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/plugin-a/Carg
+       o.toml)
+  ⎿  Wrote 7 lines to ../spike/plugin-a/Cargo.toml
+      1 [package]
+      2 name = "plugin-a"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [lib]
+      7 crate-type = ["cdylib"]
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/plugin-a/buil
+       d.rs)
+  ⎿  Wrote 14 lines to ../spike/plugin-a/build.rs
+       1 //! Link this plugin cdylib dynamically against the sibling `del
+       2 //! and embed an $ORIGIN rpath so it finds libdelay_core.so next
+          to itself at
+       3 //! load time (the Linux stand-in for macOS @loader_path / the W
+       4 //! problem — the real deployment concern this spike exercises).
+       5 use std::path::Path;
+       7 fn main() {
+       8     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+       9     let profile = std::env::var("PROFILE").unwrap();
+         rget").join(&profile);
+     … +8 lines (ctrl+o to expand)
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/plugin-a/src/
+       lib.rs)
+  ⎿  Wrote 35 lines to ../spike/plugin-a/src/lib.rs
+       1 //! Spike plugin A — the "Delay Write" stand-in. Writes into the
+          shared registry
+       2 //! through delay-core's C ABI (declared extern, resolved at loa
+       3 
+       4 extern "C" {
+       5     fn dc_acquire(ch: usize);
+       6     fn dc_release(ch: usize) -> u32;
+       7     fn dc_begin_frame(ch: usize, frame_id: u64) -> u32;
+       9     fn dc_tex_handle(ch: usize) -> u64;
+      10 }
+     … +29 lines (ctrl+o to expand)
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/plugin-b/Carg
+       o.toml)
+  ⎿  Wrote 7 lines to ../spike/plugin-b/Cargo.toml
+      1 [package]
+      2 name = "plugin-b"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [lib]
+      7 crate-type = ["cdylib"]
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/plugin-b/buil
+       d.rs)
+  ⎿  Wrote 11 lines to ../spike/plugin-b/build.rs
+       1 //! See plugin-a/build.rs — same dynamic-link-against-delay-core
+          setup.
+       3 
+       4 fn main() {
+       5     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+       7     let target = Path::new(&manifest).parent().unwrap().join("ta
+         rget").join(&profile);
+       8     println!("cargo:rustc-link-search=native={}", target.display
+       9     println!("cargo:rustc-link-lib=dylib=delay_core");
+      10     println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+     … +3 lines (ctrl+o to expand)
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/plugin-b/src/
+       lib.rs)
+  ⎿  Wrote 47 lines to ../spike/plugin-b/src/lib.rs
+       1 //! Spike plugin B — the "Delay Tap" stand-in. Reads the shared 
+         registry through
+       2 //! delay-core. If B sees values A wrote, the two DLLs share one
+       3 
+       4 extern "C" {
+       5     fn dc_acquire(ch: usize);
+       6     fn dc_release(ch: usize) -> u32;
+       7     fn dc_begin_frame(ch: usize, frame_id: u64) -> u32;
+       9     fn dc_tex_handle(ch: usize) -> u64;
+      10     fn dc_write_pos(ch: usize) -> u32;
+     … +39 lines (ctrl+o to expand)
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/host/Cargo.to
+       ml)
+  ⎿  Wrote 8 lines to ../spike/host/Cargo.toml
+      1 [package]
+      2 name = "host"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [[bin]]
+      7 name = "host"
+      8 path = "src/main.rs"
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/host/build.rs
+       )
+  ⎿  Wrote 4 lines to ../spike/host/build.rs
+      1 fn main() {
+      2     // dlopen/dlsym live in libdl on older glibc (harmless no-op 
+        on newer).
+      3     println!("cargo:rustc-link-lib=dylib=dl");
+      4 }
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/host/src/main
+       .rs)
+  ⎿  Wrote 111 lines to ../spike/host/src/main.rs
+       1 //! Spike host — models Resolume: dlopen two independent plugin 
+       2 //! that state written through plugin A is visible through plugi
+         n B. If so, the
+         ing its job.
+       4 
+       6 use std::os::raw::{c_char, c_int, c_void};
+       7 
+       9     fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_vo
+         id;
+          c_void;
+     … +125 lines (ctrl+o to expand)
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/run.sh)
+  ⎿  Wrote 22 lines to ../spike/run.sh
+       1 #!/usr/bin/env bash
+         hare ONE
+       3 # delay-core registry instance (the premise of the two-plugin sp
+         lit).
+       5 cd "$(dirname "$0")"
+       6 
+         (used for the
+       8 # Windows plugin builds) doesn't send artifacts elsewhere and br
+         eak the
+      10 export CARGO_TARGET_DIR="$(pwd)/target"
+     … +20 lines (ctrl+o to expand)
+
+● All spike files written. Running it — build the three cdylibs + host,
+  co-locate them, and let the host load both plugins and check cross-DLL
+  sharing:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 10 checks pass. Let me verify the mechanism is genuinely what I claim —
+  that the plugin finds delay-core via the $ORIGIN rpath (the deployment
+  concern), not some ambient build path. I'll inspect the ELF and prove it
+  breaks if the co-located lib is removed:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Stage 0 passes cleanly, and the mechanism is verified — not just the happy 
+  path:
+
+  - readelf confirms libplugin_a.so has a DT_NEEDED on libdelay_core.so and no 
+  absolute build path leaked into the binary.
+  - Negative test: move the co-located core lib away → dlopen fails with
+  libdelay_core.so: cannot open shared object file. Restore it → works. So the
+  plugin genuinely resolves the core lib via $ORIGIN (beside itself), exactly as
+  ldd shows (dist/./libdelay_core.so).
+
+  So the central premise holds: two independently-loaded plugin DLLs share one 
+  delay-core registry — same refcount, same buffer handle, B reads what A wrote,
+  shared frame barrier with correct first-vs-subsequent-writer detection and
+  single advance per frame, clean refcount teardown. The core-lib approach works
+  and reuses today's Mutex<[ChannelBuffer]> registry verbatim.
+
+  Let me record this and the honest remaining risk in the devlog:
+
+● Update(~/dev/voronoi-reactive-shader/features/delay-line-v3/devlog.md)
+  ⎿  Added 41 lines
+       58  ### Next
+       59  Stage 0 spike: prove two-DLL buffer sharing + clean teardown b
+           efore building any
+       60  params.
+       61 +                                                              
+       62 +## 2026-07-04 — Stage 0 spike: PASS (core-lib approach)       
+       63 +                                                              
+       64 +Built `spike/` — `delay-core` (C-ABI cdylib holding the regist
+          +ry) + two plugin                                              
+       65 +cdylibs (`plugin-a` writes, `plugin-b` reads) that dynamically
+          + link it via an                                               
+       66 +`$ORIGIN` rpath, + a host that `dlopen`s both. All 10 checks p
+          +ass:                                                          
+       67 +- Both plugins share one registry: same refcount, same buffer 
+          +handle, **B reads                                             
+       68 +  the value A wrote across the DLL boundary**.                
+       69 +- Shared per-frame barrier: first-vs-subsequent-writer detecti
+          +on and                                                        
+       70 +  single-advance-per-frame work across the two DLLs (this is w
+          +hat additive                                                  
+       71 +  accumulation needs).                                        
+       72 +- Clean refcount teardown frees the channel.                  
+       73 +                                                              
+       74 +Verified the *mechanism*, not just the result: `DT_NEEDED` on 
+          +libdelay_core.so,                                             
+       75 +no absolute build path baked in, and a negative test (remove t
+          +he co-located core                                            
+       76 +lib → `dlopen` fails; restore → works) proves the plugin resol
+          +ves it via                                                    
+       77 +`$ORIGIN` — the Linux analog of macOS `@loader_path`.         
+       78 +                                                              
+       79 +**Decision: go with the single-owner core lib** (reviewer's pi
+          +ck). It reuses the                                            
+       80 +existing `Mutex<[ChannelBuffer]>` registry as-is and gives det
+          +erministic barrier                                            
+       81 +semantics — confirmed. Shared-memory fallback not needed.     
+       82 +                                                              
+       83 +**CPU-registry-sharing risk: RETIRED.** Two Stage-0 exit items
+          + remain, both                                                 
+       84 +Resolume-side (user's Windows machine), neither an architectur
+          +al blocker:                                                   
+       85 +1. **GL texture handle sharing across the two DLLs** in Resolu
+          +me's shared GL                                                
+       86 +   context. Very low risk — the current single-DLL delay line 
+          +already shares GL                                             
+       87 +   handles between separate Read/Write *instances* via the sam
+          +e registry, and                                               
+       88 +   splitting the DLL doesn't change the GL context. Needs a sm
+          +oke test to                                                   
+       89 +   confirm, not a redesign.                                   
+       90 +2. **Windows load path for the core lib.** `$ORIGIN`/`@loader_
+          +path` cover                                                   
+       91 +   Linux/macOS, but Windows' loader does NOT search a DLL's ow
+          +n directory for its                                           
+       92 +   static imports. So a static import of `delay_core.dll` from
+          + the plugin folder                                            
+       93 +   won't resolve. Fix: have each plugin **load `delay_core` at
+          + runtime from its                                             
+       94 +   own directory** (GetModuleFileName → LoadLibraryEx), i.e. a
+          +n explicit                                                    
+       95 +   `dlopen`-style load rather than a static import. Bounded, k
+          +nown pattern — carry                                          
+       96 +   into Stage 2 as the packaging detail. (This is the one thin
+          +g that would make                                             
+       97 +   OS shared memory tempting instead; noted, not chosen.)     
+       98 +                                                              
+       99 +### Next                                                      
+      100 +Quick Resolume smoke test (item 1) to fully close Stage 0, the
+          +n Stage 1 (host                                               
+      101 +per-frame barrier signal) + Stage 2 (two plugin skeletons) usi
+          +ng the core lib.                                              
+
+● Adding a .gitignore for the spike so its build output doesn't get committed
+  (root only ignores plugins/target, not this path):
+
+● Write(~/dev/voronoi-reactive-shader/features/delay-line-v3/spike/.gitignore)
+  ⎿  Wrote 2 lines to ../spike/.gitignore
+      1 /target/
+      2 /dist/
+
+● Stage 0 verdict: the split is viable — the gating risk is retired.
+
+  The hard, novel part (two DLLs sharing one ring-buffer registry + a
+  deterministic frame barrier) is proven in WSL, and the $ORIGIN load-path
+  mechanism is verified with a negative test. Decision: core lib (reuses today's
+  registry verbatim; no shared-memory reimplementation needed).
+
+  Two items remain to fully close Stage 0, both on your Windows/Resolume side,
+  neither a blocker:
+
+  1. GL handle sharing across the two DLLs — very low risk. The shipped
+  single-DLL delay line already shares GL texture handles between separate
+  Read/Write instances through this same registry; splitting the DLL doesn't
+  touch the GL context. Needs a smoke test, not a redesign — and the first real
+  two-plugin build in Resolume is that smoke test.
+  2. Windows load path — the one genuine carry-forward. $ORIGIN/@loader_path
+  handle Linux/macOS, but Windows won't search a plugin's own folder for a
+  static import of delay_core.dll. Fix is a known pattern: each plugin loads 
+  delay_core at runtime from its own directory (GetModuleFileName →
+  LoadLibraryEx) instead of statically importing it. Folded into the plan as a
+  Stage-2 packaging detail.
+
+  All recorded in the devlog; spike lives in features/delay-line-v3/spike/ (with
+  .gitignore for build output).
+
+  Where to next?
+  - Commit the v3 docs + spike + overdub/memory reconciliation so this milestone
+  is banked, then start Stage 1–2 — build the real delay-write / delay-tap
+  skeletons on the core lib (which becomes the GL-sharing smoke test when you
+  load them in Resolume).
+  - Or pause here for you to eyeball the requirements/plan before I build the
+  real crates.
+
+  I'd bank it and proceed to the skeletons. Your call.
+
+✻ Worked for 7m 11s
+
+❯ windows must be considered primary, not secondary detail - wsl is only for    
+  linuxy dev environment, this running on windows (macos is a nice to have, but 
+  I don't have a license for rasolume on macos)                                 
+
+● You're right, and I mis-prioritized — calling the Windows load path a
+  "carry-forward detail" was wrong. If Windows is the deployment target, then
+  cross-DLL sharing on the Windows loader is the actual thing Stage 0 must 
+  retire, and my Linux spike only proved the abstract mechanism on the wrong OS.
+  The Windows loader behaves differently in exactly the way that matters here
+  (it won't search a plugin's own folder for a static import), so a Linux
+  $ORIGIN pass doesn't transfer.
+
+  Good news: I can test the real Windows loader from here — WSL can build
+  Windows DLLs (as the project already does) and run a Windows .exe via interop,
+  no Resolume needed. Let me first understand the project's Windows build setup
+  so I match it.
+  Ran 2 shell commands (ctrl+o to expand)
+
+● That reframes Stage 0 correctly — and it exposes that my Linux pass doesn't
+  actually cover the risk. On Windows the loader won't search a plugin's own 
+  folder for a static import, so delay_write.dll importing delay_core.dll from
+  Resolume's plugin folder simply won't resolve. The robust fix is different
+  from what the Linux spike did: each plugin must load delay_core.dll at runtime
+  from its own directory
+  (GetModuleHandleExW→GetModuleFileNameW→LoadLibraryExW), with no static import
+  at all.
+
+  I can prove that on the real Windows loader from here: build the DLLs with the
+  project's Windows MSVC cargo and run a Windows host .exe via WSL interop.
+  Building a Windows-native spike (spike-win/) that uses the runtime-load
+  approach:
+
+● Write(Cargo.toml)
+  ⎿  Wrote 3 lines to Cargo.toml
+      1 [workspace]
+      2 resolver = "2"
+      3 members = ["delay-core", "pluglib", "plugin-a", "plugin-b", "host
+        "]
+
+● Write(delay-core/Cargo.toml)
+  ⎿  Wrote 7 lines to delay-core/Cargo.toml
+      1 [package]
+      2 name = "delay-core"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [lib]
+      7 crate-type = ["cdylib"]
+
+● Write(delay-core/src/lib.rs)
+  ⎿  Wrote 101 lines to delay-core/src/lib.rs
+      1 //! Stage-0 (Windows) spike: the shared ring-buffer registry as a
+      2 //! Identical to the Linux spike's core — the registry is platfor
+        m-agnostic.
+      3 //! What differs on Windows is HOW the plugins locate and bind th
+      4 //! `pluglib`): runtime LoadLibraryEx from the plugin's own direc
+        tory, because
+        ugin's folder.
+      6 
+      7 use std::sync::Mutex;
+      9 const N: usize = 2;
+     … +96 lines (ctrl+o to expand)
+
+● Write(pluglib/Cargo.toml)
+  ⎿  Wrote 8 lines to pluglib/Cargo.toml
+      1 [package]
+      2 name = "pluglib"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [lib]
+      7 # rlib — statically linked into each plugin. Holds NO shared stat
+        e; the shared
+      8 # state lives in delay_core.dll, which this code loads at runtime
+        .
+
+● Write(pluglib/src/lib.rs)
+  ⎿  Wrote 111 lines to pluglib/src/lib.rs
+       1 //! Windows plugin-side loader for delay-core.
+       3 //! THE Windows-specific problem this spike exists to solve: the
+          Windows loader
+         L's *static*
+       5 //! imports. So a plugin that statically imports delay_core.dll 
+       6 //! load from Resolume's plugin folder. The fix, verified here:
+       7 //!
+         nside it
+       9 //!      (GetModuleHandleExW with FROM_ADDRESS — the address is 
+      10 //!      which is statically linked into the plugin DLL).
+     … +123 lines (ctrl+o to expand)
+
+● Write(plugin-a/Cargo.toml)
+  ⎿  Wrote 10 lines to plugin-a/Cargo.toml
+       1 [package]
+       2 name = "plugin-a"
+       3 version = "0.0.0"
+       4 edition = "2021"
+       5 
+       6 [lib]
+       7 crate-type = ["cdylib"]
+       8 
+       9 [dependencies]
+      10 pluglib = { path = "../pluglib" }
+
+● Write(plugin-a/src/lib.rs)
+  ⎿  Wrote 26 lines to plugin-a/src/lib.rs
+      1 //! Spike plugin A ("Delay Write" stand-in) — binds delay-core at
+         runtime via
+      2 //! pluglib and writes into the shared registry.
+      3 
+      4 use pluglib::api;
+      5 
+      6 #[no_mangle]
+      7 pub extern "C" fn pa_open(ch: usize) {
+      8     (api().acquire)(ch)
+      9 }
+     … +18 lines (ctrl+o to expand)
+
+● Write(plugin-b/Cargo.toml)
+  ⎿  Wrote 10 lines to plugin-b/Cargo.toml
+       1 [package]
+       2 name = "plugin-b"
+       3 version = "0.0.0"
+       4 edition = "2021"
+       5 
+       6 [lib]
+       7 crate-type = ["cdylib"]
+       8 
+       9 [dependencies]
+      10 pluglib = { path = "../pluglib" }
+
+● Write(plugin-b/src/lib.rs)
+  ⎿  Wrote 40 lines to plugin-b/src/lib.rs
+       1 //! Spike plugin B ("Delay Tap" stand-in) — binds delay-core at 
+         runtime via
+       2 //! pluglib and reads the shared registry. If B sees A's writes,
+       3 //! is shared across the two independently-loaded plugin DLLs.
+       4 
+       5 use pluglib::api;
+       6 
+       7 #[no_mangle]
+       9     (api().acquire)(ch)
+      10 }
+     … +32 lines (ctrl+o to expand)
+
+● Write(host/Cargo.toml)
+  ⎿  Wrote 8 lines to host/Cargo.toml
+      1 [package]
+      2 name = "host"
+      3 version = "0.0.0"
+      4 edition = "2021"
+      5 
+      6 [[bin]]
+      7 name = "host"
+      8 path = "src/main.rs"
+
+● Write(host/src/main.rs)
+  ⎿  Wrote 113 lines to host/src/main.rs
+       1 //! Spike host (Windows) — models Resolume: LoadLibrary two inde
+       2 //! DLLs from a plugin folder, then check that state written thr
+         ough plugin A is
+       3 //! visible through plugin B. Each plugin independently runtime-
+       4 //! delay_core.dll from its own directory; if B reads A's write,
+          they share it.
+       6 use std::ffi::{c_void, OsStr};
+       7 use std::os::windows::ffi::OsStrExt;
+       8 
+      10     fn LoadLibraryW(name: *const u16) -> *mut c_void;
+     … +129 lines (ctrl+o to expand)
+
+● Write(.gitignore)
+  ⎿  Wrote 3 lines to .gitignore
+      1 # Windows build output lives on C:\ (CARGO_TARGET_DIR), nothing l
+        ocal to ignore,
+      2 # but guard against a stray in-tree target/.
+      3 /target/
+
+● Write(run.sh)
+  ⎿  Wrote 38 lines to run.sh
+       1 #!/usr/bin/env bash
+         lugin DLLs share
+       3 # ONE delay_core.dll registry on the REAL Windows loader. Built 
+       4 # Windows MSVC cargo (via cmd.exe over the \\wsl$ UNC path, targ
+         et on C:\ per the
+         .
+       6 set -euo pipefail
+       8 WSL_USER="${WSL_USER:-alien}"
+       9 WSL_DISTRO="${WSL_DISTRO:-Ubuntu}"
+         ent\\.cargo\\bin"
+     … +45 lines (ctrl+o to expand)
+
+❯ proceed with the build stages and let me know when it's ready for a real test 
+  run before releasing                                                          
+
+● Windows spike files are written using the runtime-load approach (no static
+  import — each plugin finds delay_core.dll in its own directory via
+  GetModuleFileNameW→LoadLibraryExW). Let me build it with the project's Windows
+  MSVC cargo and run it on the real Windows loader via interop — including a
+  negative test that proves it's loading from the plugin's own dir, not an
+  ambient path:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Windows spike PASSES on the real Windows loader — and the primary-platform
+  risk is now genuinely retired:
+
+  - All 10 positive checks pass: two independently LoadLibrary'd plugin DLLs
+  share one delay_core.dll registry — B reads A's write, shared frame barrier,
+  single advance/frame, clean teardown.
+  - The negative test does exactly what it should: with delay_core.dll not
+  co-located, the plugin's LoadLibraryExW fails with err 126 
+  (ERROR_MOD_NOT_FOUND) and aborts. That scary backtrace is the intended failure
+  — it proves the plugin loads delay_core from its own directory by absolute 
+  path, not from some ambient search path. So dropping both plugins + the core
+  lib into Resolume's plugin folder will work.
+
+  The runtime-load-from-own-dir approach (GetModuleFileNameW→LoadLibraryExW, no
+  static import) is the Windows-correct pattern and it's now proven. Let me
+  record this and read the pieces I need to start the real build.
+
+● Update(~/dev/voronoi-reactive-shader/features/delay-line-v3/devlog.md)
+  ⎿  Added 36 lines, removed 2 lines
+       96     into Stage 2 as the packaging detail. (This is the one thin
+           g that would make
+       97     OS shared memory tempting instead; noted, not chosen.)
+       98  
+       99 +## 2026-07-04 — Stage 0 on Windows (the PRIMARY platform): PAS
+          +S                                                             
+      100 +                                                              
+      101 +Correction: the previous entry framed the Windows load path as
+          + a "carry-forward                                             
+      102 +detail." Wrong priority — Windows is the deployment target (Re
+          +solume runs there;                                            
+      103 +no macOS Resolume license), so cross-DLL sharing *on the Windo
+          +ws loader* is the                                             
+      104 +gate, not a footnote. Linux `$ORIGIN` does not transfer: the W
+          +indows loader won't                                           
+      105 +search a plugin's own dir for a static import.                
+      106 +                                                              
+      107 +Built `spike-win/` with the Windows-correct approach — plugins
+          + do NOT statically                                            
+      108 +import delay_core; a shared `pluglib` (rlib) finds the plugin'
+          +s own module dir                                              
+      109 +(GetModuleHandleExW FROM_ADDRESS → GetModuleFileNameW) and Loa
+          +dLibraryExW's                                                 
+      110 +`<dir>\delay_core.dll` by absolute path, then GetProcAddress-b
+          +inds the C ABI.                                               
+      111 +Built with the project's Windows MSVC cargo (cmd.exe over \\ws
+          +l$, target on C:),                                            
+      112 +ran the .exe via WSL interop.                                 
+      113 +                                                              
+      114 +Result on the real Windows loader:                            
+      115 +- All 10 positive checks pass — two independently LoadLibrary'
+          +d plugin DLLs share                                           
+      116 +  ONE delay_core.dll registry (B reads A's write, shared barri
+          +er, single advance,                                           
+      117 +  clean teardown).                                            
+      118 +- Negative test: with delay_core.dll NOT co-located, LoadLibra
+          +ryExW fails with                                              
+      119 +  err 126 (ERROR_MOD_NOT_FOUND) and aborts — proving each plug
+          +in loads delay_core                                           
+      120 +  from its OWN directory by absolute path, not an ambient sear
+          +ch path.                                                      
+      121 +                                                              
+      122 +**Stage 0 fully retired on the primary platform.** Deployment 
+          +story: ship                                                   
+      123 +delay_core.dll beside the two plugin DLLs in Resolume's plugin
+          + folder; pluglib                                              
+      124 +locates it. Architecture (core-lib + runtime bind) confirmed o
+          +n Windows.                                                    
+      125 +                                                              
+      126 +Remaining unknown, now the only Stage-0 item left, and it need
+          +s Resolume: the GL                                            
+      127 +texture handle being shared across the two DLLs in Resolume's 
+          +shared GL context.                                            
+      128 +Low risk (the shipped plugin already shares GL handles between
+          + Read/Write                                                   
+      129 +instances via the same registry), and the first real two-plugi
+          +n build IS that                                               
+      130 +test.                                                         
+      131 +                                                              
+      132  ### Next
+      100 -Quick Resolume smoke test (item 1) to fully close Stage 0, the
+          -n Stage 1 (host                                               
+      101 -per-frame barrier signal) + Stage 2 (two plugin skeletons) usi
+          -ng the core lib.                                              
+      133 +Build the real Stages 1–2 (delay-core + pluglib crates, delay-
+          +write / delay-tap                                             
+      134 +skeletons on the core lib) to a deployable state, then a real 
+          +Resolume test run                                             
+      135 +of the architecture before adding depth (Stages 3–7) or releas
+          +ing.                                                          
+
+  Read 1 file (ctrl+o to expand)
+
+● Both platforms now confirm the split works — Stage 0 is retired on Windows, 
+  the primary target. Deployment story proven: drop delay_core.dll beside the
+  two plugin DLLs in Resolume's plugin folder and pluglib locates it from the
+  plugin's own directory at load time. Recorded in the devlog; both spikes live
+  under features/delay-line-v3/ (build output gitignored).
+
+  One thing the spikes surfaced that shapes the real build: GL function pointers
+  are per-DLL (the gl crate's loaded-pointer table is a per-cdylib static). So
+  delay-core, delay-write, and delay-tap each have to run gl::load_with in their
+  own address space — the shared registry crosses the DLL boundary, but each
+  DLL initializes GL for itself. Noting it now so the build accounts for it
+  rather than discovering it in Resolume.
+
+  Proceeding to build Stages 1–2 — the real two-plugin skeleton, which is the
+  next thing that needs a real Resolume test (it doubles as the
+  GL-handle-sharing smoke test). Concretely that's:
+  - plugins/delay-core (cdylib) — port registry.rs + the buffer allocation, add
+  the host per-frame barrier and the C ABI.
+  - plugins/pluglib (rlib) — the proven Windows runtime loader + the shared
+  quad/shader helpers.
+  - plugins/delay-write + plugins/delay-tap (cdylibs) — behavior-named controls,
+  split draw logic.
+  - Wire the workspace, plugins.json, and build/deploy scripts to build +
+  co-locate the core lib.
+
+  I'll ping you when it compiles and deploys so you can do the real test run in
+  Resolume — and I won't tag, deploy to main, or cut any release until you've
+  confirmed the architecture works in the real host. Depth stages (additive
+  accumulation, sweepable time, multi-tap, precision) come after that
+  validation.
+
+  Two quick things before I go heads-down:
+  - Want me to bank this milestone first on a fresh feature/delay-line-v3 branch
+  (spikes + design docs + memory/overdub reconciliation), so the retired gate
+  is committed before the bigger build lands on top?
+  - Plugin names/IDs — I'll proceed with Delay Write/DlyW and Delay Tap/DlyT
+  unless you'd rather different labels; they're 16-byte-safe and easy to change
+  later.
+✻ Cooked for 8m 46s

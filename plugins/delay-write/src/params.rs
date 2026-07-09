@@ -3,14 +3,13 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 7;
+pub const NUM_PARAMS: usize = 6;
 pub const PARAM_CHANNEL: usize = 0;
 pub const PARAM_SYNC_MODE: usize = 1;
 pub const PARAM_SUBDIVISION: usize = 2;
 pub const PARAM_DELAY_MS: usize = 3;
 pub const PARAM_DELAY_FRAMES: usize = 4;
-pub const PARAM_REGEN: usize = 5;
-pub const PARAM_SEND: usize = 6;
+pub const PARAM_SEND: usize = 5;
 
 /// Subdivision options: (label, beats).
 const SUBDIVISIONS: [(&str, f32); 7] = [
@@ -83,17 +82,10 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             max: Some(MAX_DELAY_FRAMES as f32),
             ..Default::default()
         },
-        // 5: Regen — decay rate of the loop-old content at the write slot (the
-        //    ring-out tail). Fourth-root curve puts the useful 0.90–0.99 range
-        //    across most of the knob. 0 = clean slate each lap; 1 = infinite hold.
-        SimpleParamInfo {
-            name: CString::new("Regen").unwrap(),
-            param_type: ParameterTypes::Standard,
-            default: Some(0.0),
-            ..Default::default()
-        },
-        // 6: Send — dub throw: how hard the current frame commits into the loop.
-        //    Modulate this (hold Tap Wet high) to pulse video echoes.
+        // 5: Send — record/dub level: how much of the current frame commits into
+        //    the loop (tape = Send*input). Loop gain around the Tap is Send*Wet.
+        //    Modulate this (hold Tap Wet high) to pulse video echoes; drop to 0
+        //    to stop recording (the tape clears over one lap).
         SimpleParamInfo {
             name: CString::new("Send").unwrap(),
             param_type: ParameterTypes::Standard,
@@ -127,7 +119,6 @@ impl WriteParams {
                 2.0 / 6.0, // Subdivision: 1/4
                 500.0,     // Delay Ms
                 30.0,      // Delay Frames
-                0.0,       // Regen
                 1.0,       // Send
             ],
         }
@@ -177,14 +168,8 @@ impl WriteParams {
         self.values[PARAM_DELAY_FRAMES].round() as u32
     }
 
-    /// Decay rate of the loop-old content at the write slot. Fourth-root curve
-    /// spreads the useful dub range (0.90–0.99) across most of the knob.
-    pub fn regen(&self) -> f32 {
-        self.values[PARAM_REGEN].powf(0.25)
-    }
-
-    /// Dub throw — how much of the current frame commits into the loop. Linear
-    /// so it automates predictably when pulsed.
+    /// Record/dub level — how much of the current frame commits into the loop
+    /// (`tape = Send*input`). Linear so it automates predictably when pulsed.
     pub fn send(&self) -> f32 {
         self.values[PARAM_SEND]
     }

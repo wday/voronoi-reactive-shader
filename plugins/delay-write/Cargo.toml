@@ -13,3 +13,4 @@ gl = { workspace = true }
 gl_loader = { workspace = true }
 tracing = { workspace = true }
 pluglib = { path = "../pluglib" }
+delay-dsp = { path = "../delay-dsp" }

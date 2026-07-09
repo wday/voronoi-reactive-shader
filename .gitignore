@@ -2,6 +2,7 @@ node_modules/
 .claude/
 docs/references/
 plugins/target/
+plugins/delay-gl-tests/target/
 __pycache__/
 *.pyc
 *:Zone.Identifier

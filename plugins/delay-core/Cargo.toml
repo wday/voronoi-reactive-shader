@@ -6,11 +6,15 @@ edition = "2021"
 # cdylib so both plugin DLLs can runtime-load ONE copy (shared static registry).
 # Output artifact: delay_core.{dll,dylib}. Must sit beside the plugin DLLs;
 # pluglib locates it from each plugin's own directory (see pluglib).
+# cdylib: the runtime-loaded artifact for the plugins.
+# rlib: lets the headless integration tests link delay-core in-process (calling
+#       dc_* directly, no cross-DLL loader) — additive, does not affect the DLL.
 [lib]
 name = "delay_core"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 gl = { workspace = true }
 gl_loader = { workspace = true }
 tracing = { workspace = true }
+delay-dsp = { path = "../delay-dsp" }

@@ -1,0 +1,15 @@
+[package]
+name = "delay-dsp"
+version = "0.1.0"
+edition = "2021"
+
+# Pure, host- and GPU-independent logic for the v3 delay line. NO ffgl-core, NO
+# gl — so it compiles and `cargo test`s natively on any platform (incl. Linux/CI),
+# unlike the plugin cdylibs which need the FFGL C++ toolchain. This crate is the
+# single source of truth for the ring index arithmetic, parameter response
+# curves, and the delay-time conversion; delay-core and the plugins delegate to
+# it, and the headless tests exercise it directly.
+[lib]
+name = "delay_dsp"
+
+[dependencies]

@@ -176,10 +176,15 @@ dependencies = [
 name = "delay-core"
 version = "0.1.0"
 dependencies = [
+ "delay-dsp",
  "gl",
  "gl_loader",
  "tracing",
 ]
+
+[[package]]
+name = "delay-dsp"
+version = "0.1.0"
 
 [[package]]
 name = "delay-line-module"
@@ -195,6 +200,7 @@ dependencies = [
 name = "delay-tap"
 version = "0.1.0"
 dependencies = [
+ "delay-dsp",
  "ffgl-core",
  "gl",
  "gl_loader",
@@ -206,6 +212,7 @@ dependencies = [
 name = "delay-write"
 version = "0.1.0"
 dependencies = [
+ "delay-dsp",
  "ffgl-core",
  "gl",
  "gl_loader",

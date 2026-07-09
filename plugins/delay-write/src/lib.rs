@@ -1,17 +1,18 @@
 //! Delay Write (`DlyW`) — the record head of the v3 delay line.
 //!
 //! Records its input into a shared ring-buffer channel (delay-core, via pluglib)
-//! and advances the tape one slot per frame. The record is additive-with-decay:
+//! and advances the tape one slot per frame. It is a **pure write head** — it
+//! overwrites the slot and never reads the buffer:
 //!
-//!     tape[slot] = Regen * old  +  Send * input
+//!     tape[slot] = Send * input
 //!
-//! where `old` is this slot's loop-old content. **Regen** is the decay rate (the
-//! ring-out tail); **Send** is the dub throw (how hard the current frame commits
-//! — pulse it, holding the Tap's Wet high, to pulse video echoes). Its output is
-//! a pure passthrough of the input — the record head is visually transparent;
-//! the loop is monitored by a Delay Tap on the same Channel. A Write with no Tap
-//! records into the aether. Single writer per channel keeps the accumulation a
-//! trivial read-modify-write (no multi-writer barrier).
+//! **Send** is the record/dub level (how hard the current frame commits — pulse
+//! it, holding the Tap's Wet high, to pulse video echoes). All feedback and
+//! mixing live in the Delay Tap read head (`out = Dry*source + Wet*tape`); the
+//! loop gain around `source -> Tap -> FX -> Write` is `Send*Wet`. Its output is a
+//! pure passthrough of the input — the record head is visually transparent; the
+//! loop is monitored by a Delay Tap on the same Channel. A Write with no Tap
+//! records into the aether.
 
 mod params;
 mod shader;
@@ -26,6 +27,15 @@ use ffgl_core::{FFGLData, GLInput};
 use params::{SyncMode, WriteParams, NUM_PARAMS};
 use pluglib::api;
 use shader::WriteShaders;
+
+/// Linear resolution scale for the stored tape. 0.5 = half width/height = a
+/// quarter of the pixels, so the RGBA16F float tape (8 bytes/texel) costs about
+/// half of a full-res RGBA8 one while removing banding — the chosen Crisp↔Deep
+/// point (see CORE-FORMAT / WRITE-TAPE-SCALE). Only the recorded loop is
+/// downscaled; the passthrough output stays full-res. In feedback the Wet path
+/// re-downsamples every lap → progressive softening, while Dry injection stays
+/// crisp. Raise toward 1.0 for a sharper (heavier) tape.
+const TAPE_SCALE: f32 = 0.5;
 
 /// Host-provided per-frame id for the frame barrier: host_time as whole ms.
 /// Shared by every instance drawn in the same host frame (if Resolume sets it).
@@ -55,24 +65,25 @@ pub struct DelayWrite {
 }
 
 impl DelayWrite {
-    /// Compute delay in frames from current params. Only called when inputs change.
+    /// Compute delay in frames from current params. Only called when inputs
+    /// change. The conversion (incl. the BPM<=0 fallback, rounding and clamp)
+    /// lives in `delay-dsp` so every branch is unit-tested (see delay-dsp timing
+    /// tests); this just maps the local param values onto it.
     fn compute_delay_frames(&self, bpm: f32, max: u32) -> u32 {
-        let d = match self.params.sync_mode() {
-            SyncMode::Subdivision => {
-                if bpm <= 0.0 {
-                    return 30_u32.min(max);
-                }
-                let beat_duration = 60.0 / bpm;
-                let delay_secs = self.params.subdivision_beats() * beat_duration;
-                (delay_secs * self.fps_estimate).round() as u32
-            }
-            SyncMode::Ms => {
-                let delay_secs = self.params.delay_ms() / 1000.0;
-                (delay_secs * self.fps_estimate).round() as u32
-            }
-            SyncMode::Frames => self.params.delay_frames_raw(),
+        let mode = match self.params.sync_mode() {
+            SyncMode::Subdivision => delay_dsp::SyncMode::Subdivision,
+            SyncMode::Ms => delay_dsp::SyncMode::Ms,
+            SyncMode::Frames => delay_dsp::SyncMode::Frames,
         };
-        d.clamp(1, max)
+        delay_dsp::delay_frames(
+            mode,
+            self.params.subdivision_beats(),
+            self.params.delay_ms(),
+            self.params.delay_frames_raw(),
+            bpm,
+            self.fps_estimate,
+            max,
+        )
     }
 
     /// Latched delay, recomputed only when BPM or timing params actually change.
@@ -127,11 +138,19 @@ impl DelayWrite {
         let api = api();
         let ch = self.params.channel();
         let loop_length = self.delay_frames(data.host_beat.bpm, (api.buffer_depth)());
-        // Advance the tape once this frame (single writer: barrier flag unused).
-        (api.begin_frame_write)(ch, loop_length, width, height, frame_id(data));
+        // Tape is stored at reduced resolution (TAPE_SCALE) + RGBA16F. Downscale
+        // the sizing dims; the core allocates the tape at exactly these dims and is
+        // otherwise resolution-agnostic (the Tap reads it with normalised uv +
+        // linear filtering, so it upscales on read for free).
+        let tape_w = ((width as f32 * TAPE_SCALE).round() as u32).max(1);
+        let tape_h = ((height as f32 * TAPE_SCALE).round() as u32).max(1);
+        // Tick the shared barrier once this frame: sizes/retunes the buffer and
+        // advances the channel's monotonic frame_index (spec v0.2). Single writer
+        // per channel, so the first-of-frame flag is unused.
+        (api.frame_tick)(ch, loop_length, tape_w, tape_h, frame_id(data));
         let tex = (api.tex)(ch);
-        let wp = (api.write_pos)(ch);
         let buf_size = (api.buf_size)(ch);
+        let frame_index = (api.frame_index)(ch);
 
         let uv_scale = [width as f32 / hw_width as f32, height as f32 / hw_height as f32];
         let shaders = self.shaders.as_ref().unwrap();
@@ -142,32 +161,34 @@ impl DelayWrite {
                 gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
                 gl::Viewport(host_viewport[0], host_viewport[1], host_viewport[2], host_viewport[3]);
             }
-            shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 1.0, 0.0);
+            shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 1.0, 0.0, 1.0);
             return;
         }
 
-        // 1. Record into buffer[wp]:  tape[wp] = Regen*old + Send*input.
-        //    `old` is this slot's loop-old content (single writer). The fade
-        //    pre-pass scales it in place by Regen; the additive write then adds
-        //    Send*input via a CONSTANT_COLOR=Send, dst=ONE blend. A Delay Tap
-        //    upstream reads this same slot pre-overwrite (one full lap back).
-        let regen = self.params.regen();
+        // Write slot = frame_index mod buf_size (spec v0.2 absolute addressing).
+        // Computed via delay-dsp so it stays reconciled with the Tap's read slot
+        // and the unit tests. buf_size is stable across the whole frame, so this
+        // slot is order-independent.
+        let wp = delay_dsp::Ring::for_buffer(buf_size).write_slot(frame_index);
+
+        // 1. Record into buffer[wp]:  tape[wp] = Send * input.  A pure write head:
+        //    it overwrites the slot and never reads the buffer. ALL feedback and
+        //    mixing lives in the Delay Tap (out = Dry*source + Wet*tape); the loop
+        //    gain around source->Tap->FX->Write is Send*Wet. (This dropped the old
+        //    `(1-Send)*Regen*old` term, which double-read the buffer — a leftover
+        //    from the unified single-plugin delay; Regen is gone.) Blend stays
+        //    disabled, so the record is a straight overwrite and Write touches no
+        //    host blend state.
         let send = self.params.send();
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
             gl::FramebufferTextureLayer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, tex, 0, wp as i32);
-            gl::Viewport(0, 0, width as i32, height as i32);
+            // Viewport = tape (downscaled) dims, not the full frame. uv_scale still
+            // maps to the full-res input, so this is a full-frame downsample into
+            // the smaller layer (single bilinear tap; fine at 0.5×).
+            gl::Viewport(0, 0, tape_w as i32, tape_h as i32);
         }
-        shaders.fade_pass(tex, wp as f32, regen);
-        unsafe {
-            gl::Enable(gl::BLEND);
-            gl::BlendColor(send, send, send, send);
-            gl::BlendFunc(gl::CONSTANT_COLOR, gl::ONE);
-        }
-        shaders.write_pass(input_tex, uv_scale);
-        unsafe {
-            gl::Disable(gl::BLEND);
-        }
+        shaders.write_pass(input_tex, uv_scale, send);
 
         // 2. Output = passthrough of the input. The record head is transparent;
         //    the loop is monitored by a Delay Tap on the same Channel.
@@ -175,7 +196,7 @@ impl DelayWrite {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(host_viewport[0], host_viewport[1], host_viewport[2], host_viewport[3]);
         }
-        shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 1.0, 0.0);
+        shaders.output.draw(&shaders.quad, input_tex, uv_scale, 0, 0.0, 1.0, 0.0, 1.0);
     }
 }
 
@@ -231,18 +252,28 @@ impl SimpleFFGLInstance for DelayWrite {
 
         self.update_fps();
 
-        // Save host GL state (shared context with Resolume).
+        // Save host GL state (shared context with Resolume). The pure-overwrite
+        // write head touches no blend state, so the restore only covers the
+        // enable flags and the active-unit texture binding it does disturb (spec
+        // v0.2 open-question #2: GL-state restore gap). GL_TEXTURE0's binding in
+        // particular must be put back (project note: never leave the host's
+        // unit-0 texture unbound).
         let mut host_fbo: GLint = 0;
         let mut host_viewport: [GLint; 4] = [0; 4];
         let scissor_was_on;
         let blend_was_on;
         let depth_was_on;
+        let mut prev_active_tex: GLint = gl::TEXTURE0 as GLint;
+        let mut prev_tex0: GLint = 0;
         unsafe {
             gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut host_fbo);
             gl::GetIntegerv(gl::VIEWPORT, host_viewport.as_mut_ptr());
             scissor_was_on = gl::IsEnabled(gl::SCISSOR_TEST) == gl::TRUE;
             blend_was_on = gl::IsEnabled(gl::BLEND) == gl::TRUE;
             depth_was_on = gl::IsEnabled(gl::DEPTH_TEST) == gl::TRUE;
+            gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut prev_active_tex);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::GetIntegerv(gl::TEXTURE_BINDING_2D, &mut prev_tex0);
             gl::Disable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
             gl::Disable(gl::DEPTH_TEST);
@@ -250,9 +281,12 @@ impl SimpleFFGLInstance for DelayWrite {
 
         self.draw_write(data, input_tex, width, height, hw_width, hw_height, host_fbo, host_viewport);
 
-        // Restore host GL state.
+        // Restore host GL state (see the save comment above).
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, prev_tex0 as GLuint);
+            gl::ActiveTexture(prev_active_tex as GLenum);
             if scissor_was_on { gl::Enable(gl::SCISSOR_TEST); }
             if blend_was_on { gl::Enable(gl::BLEND); }
             if depth_was_on { gl::Enable(gl::DEPTH_TEST); }
@@ -264,7 +298,6 @@ impl SimpleFFGLInstance for DelayWrite {
                 frame = self.frame_count,
                 channel = self.params.channel() + 1,
                 delay_frames = self.latched_delay,
-                regen = format!("{:.2}", self.params.regen()),
                 send = format!("{:.2}", self.params.send()),
                 fps = format!("{:.1}", self.fps_estimate),
                 bpm = format!("{:.1}", data.host_beat.bpm),
@@ -305,7 +338,7 @@ impl SimpleFFGLInstance for DelayWrite {
             unique_id: *b"DlyW",
             name: *b"Delay Write     ",
             ty: ffgl_core::info::PluginType::Effect,
-            about: "Delay record head: records input to a shared channel (Regen decay + Send throw), passes input through".to_string(),
+            about: "Delay record head: writes Send*input to a shared channel (pure write head), passes input through".to_string(),
             description: "v3 delay line — Write head (pairs with Delay Tap on the same Channel)".to_string(),
         }
     }

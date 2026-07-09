@@ -3,10 +3,15 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 3;
+pub const NUM_PARAMS: usize = 4;
 pub const PARAM_CHANNEL: usize = 0;
 pub const PARAM_DRY: usize = 1;
 pub const PARAM_WET: usize = 2;
+pub const PARAM_BLEND: usize = 3;
+
+/// Blend-space exponent for Linear mode — a cheap ~sRGB stand-in (see the
+/// `Blend Space` param and `output.frag.glsl`). Perceptual mode uses 1.0.
+pub const LINEAR_GAMMA: f32 = 2.2;
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [
@@ -41,6 +46,22 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             default: Some(0.5),
             ..Default::default()
         },
+        // 3: Blend Space — the colour space the Dry/Wet sum happens in.
+        //    Linear (default): decode to ~linear light, blend + clamp as real
+        //    light, re-encode — cleaner colour mixing and additive highlight
+        //    bloom. Perceptual: blend the sRGB-encoded values directly — the
+        //    per-lap fade reads perceptually even (video-mixer look), and is the
+        //    exact legacy behaviour. See output.frag.glsl (u_gamma).
+        SimpleParamInfo {
+            name: CString::new("Blend Space").unwrap(),
+            param_type: ParameterTypes::Option,
+            default: Some(1.0),
+            elements: Some(vec![
+                (CString::new("Perceptual").unwrap(), 0.0),
+                (CString::new("Linear").unwrap(), 1.0),
+            ]),
+            ..Default::default()
+        },
     ]
 });
 
@@ -59,6 +80,7 @@ impl TapParams {
                 0.0, // Channel: 1
                 1.0, // Dry: full source
                 0.5, // Wet: half feedback
+                1.0, // Blend Space: Linear (default)
             ],
         }
     }
@@ -83,5 +105,11 @@ impl TapParams {
 
     pub fn wet(&self) -> f32 {
         self.values[PARAM_WET]
+    }
+
+    /// Blend-space exponent for the output pass: 1.0 = Perceptual (blend the
+    /// encoded values directly, legacy), LINEAR_GAMMA = Linear light.
+    pub fn gamma(&self) -> f32 {
+        if self.values[PARAM_BLEND] < 0.5 { 1.0 } else { LINEAR_GAMMA }
     }
 }

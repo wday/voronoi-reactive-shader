@@ -152,6 +152,7 @@ pub struct OutputProgram {
     loc_layer: GLint,
     loc_dry: GLint,
     loc_wet: GLint,
+    loc_gamma: GLint,
 }
 
 impl OutputProgram {
@@ -163,7 +164,8 @@ impl OutputProgram {
         let loc_layer = prog.uniform_loc("u_layer");
         let loc_dry = prog.uniform_loc("u_dry");
         let loc_wet = prog.uniform_loc("u_wet");
-        Self { prog, loc_input, loc_uv_scale, loc_buffer, loc_layer, loc_dry, loc_wet }
+        let loc_gamma = prog.uniform_loc("u_gamma");
+        Self { prog, loc_input, loc_uv_scale, loc_buffer, loc_layer, loc_dry, loc_wet, loc_gamma }
     }
 
     /// Bind `quad`'s vertex attributes for this program's VAO. Call once after
@@ -174,9 +176,12 @@ impl OutputProgram {
         quad.setup_attrs(self.prog.program);
     }
 
-    /// Draw `clamp(dry*input + wet*buffer[layer])` into the currently bound FBO.
-    /// `buffer_tex` may be 0 (samples black) — pass `wet = 0.0` (and `dry = 1.0`)
-    /// for a clean passthrough of `input_tex` when no ring buffer exists yet.
+    /// Draw the blend into the currently bound FBO. `gamma` selects the blend
+    /// space: `1.0` = perceptual (blend the sRGB-encoded values directly, exact
+    /// legacy path), `>1.0` (~2.2) = linear light (decode → blend → re-encode).
+    /// `buffer_tex` may be 0 (samples black) — pass `wet = 0.0` (and `dry = 1.0`,
+    /// `gamma = 1.0`) for a clean passthrough of `input_tex` when no ring buffer
+    /// exists yet, or for the Write's transparent output.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
@@ -187,6 +192,7 @@ impl OutputProgram {
         layer: f32,
         dry: f32,
         wet: f32,
+        gamma: f32,
     ) {
         self.prog.use_program();
         unsafe {
@@ -202,6 +208,7 @@ impl OutputProgram {
 
             gl::Uniform1f(self.loc_dry, dry);
             gl::Uniform1f(self.loc_wet, wet);
+            gl::Uniform1f(self.loc_gamma, gamma);
         }
         quad.draw();
         unsafe {

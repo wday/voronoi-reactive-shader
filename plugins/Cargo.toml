@@ -1,9 +1,13 @@
 [workspace]
 resolver = "2"
+# delay-gl-tests is a self-contained headless-GL harness (its own [workspace]);
+# excluded so the Windows plugin build never resolves its EGL/gl deps.
+exclude = ["delay-gl-tests"]
 members = [
     "video-looper",
     "video-looper-ltm-dream",
     "delay-line-module",
+    "delay-dsp",
     "delay-core",
     "pluglib",
     "delay-write",

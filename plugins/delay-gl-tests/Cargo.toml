@@ -1,0 +1,23 @@
+[package]
+name = "delay-gl-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Headless-GL integration harness for the v3 delay line. Runs the REAL delay-core
+# ring + the REAL plugin shaders (via include_str! of the sibling crates' GLSL)
+# on a surfaceless EGL/llvmpipe context, and asserts pixel values end-to-end —
+# no Resolume, no FFGL. Excluded from the parent workspace (see plugins/Cargo.toml)
+# so the Windows plugin build never pulls its EGL/gl dev stack.
+[lib]
+name = "delay_gl_tests"
+
+[dependencies]
+gl = "0.14.0"
+delay-core = { path = "../delay-core" }
+delay-dsp = { path = "../delay-dsp" }
+pluglib = { path = "../pluglib" }
+khronos-egl = { version = "6", features = ["dynamic"] }
+libloading = "0.8"
+
+[workspace]

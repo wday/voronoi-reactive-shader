@@ -1,0 +1,1103 @@
+[DOCUMENT]
+TITLE: Delay Line v3 — Two-Atom Feedback Engine
+UID: DLV3
+VERSION: 0.3-draft
+OPTIONS:
+  VIEW_STYLE: Table
+
+[GRAMMAR]
+ELEMENTS:
+- TAG: REQUIREMENT
+  FIELDS:
+  - TITLE: UID
+    TYPE: String
+    REQUIRED: True
+  - TITLE: TITLE
+    TYPE: String
+    REQUIRED: True
+  - TITLE: COMPONENT
+    TYPE: SingleChoice(Core, Write, Tap, Composition, System)
+    REQUIRED: True
+  - TITLE: STATEMENT
+    TYPE: String
+    REQUIRED: True
+  - TITLE: RATIONALE
+    TYPE: String
+    REQUIRED: False
+  - TITLE: VERIFICATION
+    TYPE: String
+    REQUIRED: False
+  - TITLE: STATUS
+    TYPE: SingleChoice(Draft, Built, Validated, Deferred)
+    REQUIRED: False
+  RELATIONS:
+  - TYPE: Parent
+
+[TEXT]
+STATEMENT: >>>
+The Delay Line v3 is a modular video-feedback engine expressed as the two
+smallest composable atoms — a read head (**Delay Tap**) and a record head
+(**Delay Write**) — over a shared GPU tape (**Delay Core**). They stack as:
+
+  source -> [Delay Tap] -> fx1 -> fx2 -> [Delay Write] -> output
+
+This document is the authoritative specification. v0.2 revises the tape
+addressing model: reads and writes are now addressed **absolutely** off a
+per-channel per-frame counter `frame_index` (see CORE-ADVANCE / TAP-READ-SLOT),
+so a Tap reads the same delay regardless of its position relative to any Write in
+the stack and regardless of how many Tap/Write instances interleave in a frame.
+This supersedes the as-built v0.1 shared-write-pointer model (branch
+`delay-line-v3`, commit `dcb44c6`), in which the read position was derived from a
+pointer the Write mutated mid-frame and was therefore order-dependent (and one
+frame too long — the old CORE-DEPTH off-by-one).
+
+Requirements whose behaviour changes under v0.2 are marked STATUS: Draft with the
+code delta from `dcb44c6` called out in their RATIONALE or VERIFICATION;
+requirements unaffected by the addressing change retain STATUS: Built. Where the
+prose in `requirements.md` disagrees, this document wins; `requirements.md` has
+not yet been reconciled to v0.2.
+
+v0.3 further simplifies the **Write into a pure write head**. The record equation
+is now a straight overwrite `tape[slot] = Send * input`: the Write never reads the
+tape and the **Regen** parameter is removed. The old v0.1/v0.2 record math
+`(1 - Send) * Regen * old + Send * input` (a fade pre-pass plus an additive write)
+was a lineage artifact of the shipped unified `DLMd` plugin, in which a single node
+did its own in-place feedback; split into a Tap + Write pair it double-expressed
+the loop the Tap already owns. **All feedback and mixing now live in the Tap**
+(`out = Dry * source + Wet * tape`); the loop gain around `source -> Tap -> FX ->
+Write` is `Send * Wet`. The Write drops from 7 to 6 FFGL params and touches no host
+blend state (a single overwrite pass, blend disabled). Requirements changed by v0.3
+call out the delta from `dcb44c6` in their RATIONALE/VERIFICATION.
+
+The design goal is the *minimum playable control surface*: every knob is either a
+plain gain or a time value, each does exactly one thing, and no knob couples two
+behaviours. The prior unified `DLMd` plugin and the intermediate over-built v3
+(Thru<->Playback, Buffer Mix, Blend-mode selector, multi-tap, Regen) are
+superseded.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+# Terminology
+<<<
+
+[TEXT]
+STATEMENT: >>>
+- **Tape / ring buffer** — the per-channel GPU texture array that stores recent
+  frames; the Write records into it, the Tap reads from it.
+- **Slot / layer** — one frame of storage in the tape (one array layer).
+- **Frame counter (`frame_index`, `t`)** — a per-channel monotonic count of host
+  frames since allocation. It advances by exactly one **once per host frame**,
+  performed by the first plugin — Tap *or* Write — to touch the Core that frame
+  (the barrier, CORE-BARRIER). Every slot address is a pure function of this
+  single per-frame value, so addresses do not change as plugins draw within the
+  frame — this is what makes the read order-independent.
+- **Write slot** — `t mod buf_size`: the slot this frame's Write records into
+  (the Core does no GL/record itself; the Write *plugin* records there).
+- **Read slot / full delay** — `(t − loop_length) mod buf_size`: the slot the Tap
+  reads. Its content is exactly **`loop_length` frames old** — the realized delay
+  equals the requested `loop_length`, no off-by-one (the v0.1 `+1` is gone, see
+  CORE-DEPTH). Because `1 ≤ loop_length ≤ buf_size − 1`, the read slot is always a
+  **different layer from the write slot**, so this frame's Write cannot disturb
+  the read no matter which is drawn first — order-independence replaces the old
+  draw-order-protects-the-read trick.
+- **One lap / slot lifetime** — `buf_size = loop_length + 1` frames: how long a
+  recorded frame survives before its slot is overwritten. The Tap reads a slot at
+  age `loop_length`, i.e. exactly one frame before it is overwritten; that
+  one-frame margin is the **guard slot** (the `+1` in `buf_size`), which is what
+  keeps the read slot off the write slot.
+- **Loop** — a Tap and a Write set to the same Channel, with FX between them;
+  video recirculates once every `loop_length` frames (the recirculation period
+  now matches the knob).
+- **Injection** — new source material entering the loop (Tap Dry, Write Send).
+- **Feedback / sustain** — how much of the recirculating tail survives each lap.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+# Delay Core (shared tape)
+<<<
+
+[REQUIREMENT]
+UID: CORE-CHANNELS
+TITLE: Fixed channel count
+COMPONENT: Core
+STATEMENT: >>>
+The Core SHALL expose exactly 2 independent channels, indexed 0 and 1 and
+presented to the user as labels "1" and "2". The count is the compile-time
+constant `NUM_CHANNELS` and is not user-configurable at runtime.
+<<<
+RATIONALE: >>>
+Increasing the channel count (4–8) is VRAM-heavy and explicitly deferred to
+fast-follow F6. Keeping it a constant (not a baked-in literal spread through the
+code) makes that later bump a one-line change.
+<<<
+VERIFICATION: >>>
+Inspect `plugins/delay-core/src/lib.rs`: `NUM_CHANNELS == 2`. In Resolume, the
+Channel selector on both plugins offers exactly two options, "1" and "2".
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: CORE-DEPTH
+TITLE: Tape depth and usable delay range
+COMPONENT: Core
+STATEMENT: >>>
+Each channel's tape SHALL hold `BUFFER_DEPTH` = 240 frame slots (the texture
+array is always allocated at full depth, see CORE-FORMAT). The user sets a delay
+parameter `loop_length` where `1 <= loop_length <= BUFFER_DEPTH - 1` (i.e.
+1..=239); the ring **uses** `buf_size = loop_length + 1` of the 240 layers. The
+**realized delay** — the age of the content the Tap reads — SHALL equal
+`loop_length` frames exactly. The write slot (`t mod buf_size`) and the read slot
+(`(t − loop_length) mod buf_size`) differ by `loop_length` (mod `buf_size`),
+which is non-zero for every legal `loop_length`, so they are always distinct
+layers. The `+1` in `buf_size` is a **size margin** — the **guard slot** — that
+keeps them distinct: it makes `buf_size` one larger than `loop_length` so the
+age-`loop_length` read address always trails the write address by a non-zero
+offset. It is NOT a reserved/unused layer: with monotonic addressing the write
+cycles through every one of the `buf_size` layers over `buf_size` frames, so all
+of them hold live delayed content in rotation.
+<<<
+RATIONALE: >>>
+v0.2 RESOLVES the v0.1 off-by-one. In v0.1 the read slot was `(wp + 1) mod
+buf_size` computed from the live pointer, which was *identically* the slot the
+Write advanced into and overwrote that frame; the read survived only because the
+Tap was drawn first (COMPOSE-ORDER), and the realized delay came out at
+`loop_length + 1`. v0.2 addresses reads and writes absolutely off the per-frame
+counter `frame_index` (CORE-ADVANCE): the read targets
+`(t − loop_length) mod buf_size`, a layer the current frame's Write never
+touches, so (a) the delay is `loop_length` exactly and (b) the read is
+independent of draw order. The `+1` extra layer is no longer dead weight — it is
+the guard slot required for the full-delay read (age `loop_length`) to sit one
+layer off the write target; at `loop_length = 239`, `buf_size = 240` uses all
+240 layers, with the read exactly one layer behind the write.
+CODE DELTA from `dcb44c6`: the Core must expose a monotonic `frame_index` and
+compute slots as above, instead of returning a wrapping `write_pos` that both
+sides offset by `+1`; see CORE-ADVANCE, CORE-ABI, TAP-READ-SLOT.
+<<<
+VERIFICATION: >>>
+`BUFFER_DEPTH == 240`; the ring modulus is `buf_size = loop_length + 1` and
+`loop_length` is clamped to `1..=BUFFER_DEPTH-1`. The allocation itself is always
+240 layers (`alloc_buffer`), not `buf_size` layers. Realized delay is verifiable
+live: set Frames mode to N, Send=1, feed a single flash frame (after warm-up so
+the referenced slot has been written), and count host frames until the Tap
+reproduces it — the count SHALL be exactly N (no seed-lap off-by-one, because
+both slots derive from the same `frame_index`). During the first `loop_length`
+frames after allocation the read address lands on a slot not yet written this lap;
+because every layer is cleared to black on allocation (CORE-FORMAT), the read
+returns black (no spurious echo) — this warm-up is handled by the cleared buffer,
+NOT by the Wet-mute in TAP-EMPTY-BUFFER (which fires only when the tape is
+unallocated).
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: CORE-FORMAT
+TITLE: Tape pixel format
+COMPONENT: Core
+STATEMENT: >>>
+The tape SHALL be an RGBA16F (16-bit half-float per channel) 2D texture array.
+Float storage removes the 8-bit banding that the linear-blend feedback tail
+otherwise shows (TAP-BLEND-SPACE) and can hold values with headroom. Over-unity
+(>1.0) accumulation is still NOT retained across laps, because the feedback loop
+passes through Resolume's inter-effect FBO (8-bit unless the host composits in
+float, which is outside our control) and the Write overwrites rather than
+accumulates — so the tape receives already-clipped [0,1] input each lap.
+<<<
+RATIONALE: >>>
+This lands the precision half of the old DEFER-FLOAT (F3). The realizable win is
+banding removal, not the over-unity runaway the original note imagined — that
+needs a float loop path (host float mode) and/or additive tape accumulation
+(DEFER-IFS), both still deferred. VRAM is kept affordable by storing the tape at
+reduced resolution (WRITE-TAPE-SCALE): at 0.5× the RGBA16F tape (8 bytes/texel) is
+~0.97 GB/channel at 1080p×240 — less than the old full-res RGBA8 (~1.94 GB). The
+Crisp<->Deep budget is thus partially realized (a fixed spatial scale); trading
+resolution for a deeper buffer / longer max delay (dynamic `BUFFER_DEPTH`) remains
+deferred.
+<<<
+VERIFICATION: >>>
+`alloc_buffer` creates a `GL_RGBA16F` `GL_TEXTURE_2D_ARRAY` (`GL_HALF_FLOAT`) with
+`BUFFER_DEPTH` layers, cleared to zero via `clear_texture_array`. Tier-2
+headless-GL still passes (8-bit-in values round-trip exactly through half-float),
+incl. scenario 8 which reads a half-res tape back at full res.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: CORE-ADVANCE
+TITLE: Frame counter — one advance per host frame
+COMPONENT: Core
+STATEMENT: >>>
+The Core SHALL maintain a per-channel monotonic frame counter `frame_index` and
+advance it by exactly one per host frame. The advance is performed once per frame
+by the first plugin to touch the Core that frame — Tap *or* Write (see
+CORE-BARRIER) — regardless of how many plugin instances read or write the channel
+that frame. The write slot is `frame_index mod buf_size` and the full-delay read
+slot is `(frame_index − loop_length) mod buf_size`; both are pure functions of
+`frame_index`, so every plugin in the frame computes the same addresses no matter
+the draw order or how many Tap/Write instances interleave.
+<<<
+RATIONALE: >>>
+Advancing a monotonic counter (not a wrapping write pointer) and addressing slots
+absolutely off it is what makes the Tap read order-independent (TAP-READ-SLOT)
+and removes the CORE-DEPTH off-by-one. In v0.1 the advance was owned by the Write
+and happened mid-frame, so a Tap drawn before a Write saw a different pointer
+value than one drawn after; here the single advance is frame-scoped and every
+address derives from it, so the read cannot shift within a frame.
+<<<
+VERIFICATION: >>>
+`dc_frame_tick` advances `frame_index` only inside the `first_touch` branch;
+subsequent callers with the same `frame_id` leave it unchanged. Observable: a
+flash fed at frame k reproduces at exactly frame k + loop_length, and a
+Tap→Write→Tap sequence on one Channel makes both Taps read identical content
+(v0.1 made them read one-frame-different content).
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: CORE-BARRIER
+TITLE: Per-frame barrier keyed on host frame id
+COMPONENT: Core
+STATEMENT: >>>
+The Core SHALL identify a host frame by a host-provided per-frame id (the FFGL
+`host_time` truncated to whole milliseconds). The first `dc_frame_tick` call for
+a channel with a new `frame_id` is the "first touch": it advances `frame_index`
+and returns 1. Later calls in the same `frame_id` return 0 and do not advance.
+Both plugins call `dc_frame_tick` at the top of their draw, so whichever of them
+(Tap or Write) draws first advances the frame. A freshly (re)allocated buffer
+resets the barrier so the next touch is treated as first-of-frame.
+<<<
+RATIONALE: >>>
+Keying on host frame id (not 2 ms wall-clock) makes the advance deterministic
+under variable render load. In v0.2 the barrier is touched by the Tap as well as
+the Write, so the frame counter is frame-scoped rather than Write-scoped — this
+is what lets a Tap drawn before the Write compute the same address as one drawn
+after (CORE-ADVANCE); the Tap advances the clock only when first-of-frame and
+still never writes tape pixels (TAP-READ-ONLY). NOTE (degenerate, unsupported): a
+frame in which a channel is touched only by Tap(s) and no Write still advances
+the counter, so a Tap with no matching Write reads progressively older slots
+(rotates the tape) rather than freezing. Like the multi-writer case
+(COMPOSE-SINGLE-WRITER) this is called out rather than guarded. Deterministic
+multi-writer accumulation remains the deferred additive-IFS refinement (F5).
+<<<
+VERIFICATION: >>>
+`dc_frame_tick` computes `first_touch = !ch.frame_active || ch.frame_id !=
+frame_id`. NOTE (open): if the host ever reports the same whole-millisecond
+`host_time` for two consecutive frames (>=1000 fps, or a stalled clock), the
+second frame's touch is mis-classified as same-frame and the counter does not
+advance. Confirm host_time resolution is adequate on target hardware.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: CORE-REALLOC
+TITLE: Reallocation on resolution change
+COMPONENT: Core
+STATEMENT: >>>
+When the incoming frame width or height differs from the currently allocated
+tape, the Core SHALL reallocate that channel's tape to the new size. The old
+tape contents are discarded (the loop is reseeded from empty).
+<<<
+VERIFICATION: >>>
+`needs_alloc` triggers when `b.width != width || b.height != height`; the old
+texture is deleted and a fresh cleared array allocated.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: CORE-LENGTH-RESEED
+TITLE: Reseed the tape to black on a loop-length change
+COMPONENT: Core
+STATEMENT: >>>
+When the effective `loop_length` changes without a resolution change, the Core
+SHALL clear the whole tape (all `BUFFER_DEPTH` layers) to black before adopting
+the new length. The read then warms up from black over one lap, identically to a
+fresh allocation (CORE-DEPTH), rather than reading residual content.
+<<<
+RATIONALE: >>>
+`loop_length` IS the ring modulus (`buf_size = loop_length + 1`), and every slot
+address is `frame_index mod buf_size` (CORE-ADVANCE). Changing the modulus re-maps
+which frame each layer represents, so ALL previously-recorded layers become
+temporally incoherent — not just a tail. The worst symptom is *expansion*: e.g.
+record at loop_length 60, shrink to 10 (only ~10 layers get rewritten), then expand
+back to 60 — the read now sweeps ~50 layers the short loop never rewrote and
+resurfaces stale pre-shrink frames for up to one lap. A full reseed makes the
+behaviour a clean warm-up in every case (shrink or expand). Because `loop_length`
+is latched (WRITE-TIME-LATCH holds it steady frame-to-frame), this fires only on a
+real change, not per frame; NOTE: continuously *dragging* the Frames/Ms value
+re-clears each step (the tape stays black while dragging) — smooth time change is
+DEFER-SWEEP, and beat-sync / discrete values reseed once as intended.
+<<<
+VERIFICATION: >>>
+`dc_frame_tick`'s retune branch compares the new clamped `loop_length` to the
+stored one and, on a difference, calls `clear_texture_array(tex)` (an FBO +
+`glClear` per layer — GPU-side, no multi-GB CPU upload; the same helper
+`alloc_buffer` uses) before updating `buf.loop_length`. Tier-2 headless-GL
+(`delay-gl-tests` scenario 7): fill a loop_length-8 ring so every slot is white,
+change the length, and a previously-white layer reads back black.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: CORE-REFCOUNT
+TITLE: Channel acquire/release refcounting
+COMPONENT: Core
+STATEMENT: >>>
+Each plugin instance SHALL acquire the channel it uses (`dc_acquire`) and
+release it on drop or channel change (`dc_release`), keeping a per-channel
+reference count. `dc_release` SHALL perform no GL calls, because it can run off
+the GL thread; the tape texture name is allowed to leak until process exit.
+<<<
+RATIONALE: >>>
+Matches the shipped v2 plugin's safe-teardown behaviour. The only GL delete is in
+the realloc path of `dc_frame_tick`, which always runs on the GL thread.
+<<<
+VERIFICATION: >>>
+`dc_release` contains no `gl::` calls; both plugins call `acquire`/`release` in
+`new`, `set_param` (on Channel change), and `Drop`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: CORE-ABI
+TITLE: Cross-DLL C ABI
+COMPONENT: Core
+STATEMENT: >>>
+The Core SHALL be a single C-ABI cdylib (`delay_core.dll`) exposing `dc_*`
+functions, runtime-loaded by each plugin DLL from its own directory. The GPU
+texture handles it owns are shared across the plugin DLLs via the shared GL
+context; only texture handles cross the DLL boundary, not FBOs.
+<<<
+VERIFICATION: >>>
+`delay_core` exports `dc_buffer_depth`, `dc_acquire`, `dc_release`,
+`dc_frame_tick`, `dc_tex`, `dc_frame_index`, `dc_buf_size`. v0.2 renames
+`dc_begin_frame_write` → `dc_frame_tick` (now called by both plugins, CORE-
+BARRIER) and replaces the wrapping `dc_write_pos` with the monotonic
+`dc_frame_index`. Plugins reach them through `pluglib::api()`.
+<<<
+STATUS: Draft
+
+[TEXT]
+STATEMENT: >>>
+# Delay Write (DlyW) — record head
+<<<
+
+[REQUIREMENT]
+UID: WRITE-IDENTITY
+TITLE: Plugin identity
+COMPONENT: Write
+STATEMENT: >>>
+The Write plugin SHALL register with unique id `DlyW` and the exactly-16-byte
+name `"Delay Write     "`, as an FFGL Effect.
+<<<
+VERIFICATION: >>>
+`plugin_info()` returns `unique_id: b"DlyW"`, `name: b"Delay Write     "` (16
+bytes), `ty: Effect`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-RECORD-MATH
+TITLE: Record equation
+COMPONENT: Write
+STATEMENT: >>>
+Each frame the Write SHALL record its input into the current write slot as a
+straight overwrite:
+
+  tape[slot] = Send * input
+
+where `input` is the current frame. The Write is a **pure write head**: it never
+reads the slot's prior content. This is implemented as a single shader pass with
+GL blend DISABLED, so the pass fully replaces the slot's pixels; there is no fade
+pre-pass and no additive blend.
+<<<
+RATIONALE: >>>
+v0.3 removes the old `(1 - Send) * Regen * old` decay term (and with it the
+`Regen` parameter, see the removal noted in SYS-PARAM-COUNTS). That term was a
+lineage artifact of the shipped unified `DLMd` plugin, where a single node did its
+own in-place feedback; in a Tap + Write pair it double-expressed the loop the Tap
+already owns (`out = Dry*source + Wet*tape`), so the same recirculating tail was
+fed back twice — once by the Write's `Regen*old` and once by the Tap's `Wet`. With
+the decay term gone, **all feedback and mixing live in the Tap** and the Write is a
+transparent recorder: it just commits `Send` of the current frame into the tape.
+The whole-loop feedback coefficient collapses from `(1-Send)*Regen + Send*Wet` to
+simply `Send * Wet` (see LOOP-FEEDBACK-COEFF). Removing the buffer read also means
+the Write touches no GL blend state (COMPOSE-GLSTATE), shrinking the state-restore
+surface. CODE DELTA from `dcb44c6`: the fade pre-pass and the additive
+`CONSTANT_COLOR=Send`, `ONE` blend are deleted; `fade.frag.glsl` is removed; the
+record is a single `write_pass` with blend disabled. The stale comments the v0.2
+draft catalogued here (lib.rs module doc, fade.frag.glsl header, shader.rs
+terminology, the delay-core "spare slot" comment) have been reconciled to this
+model in code.
+<<<
+VERIFICATION: >>>
+`draw_write` (`delay-write/src/lib.rs`) records into
+`write_slot = frame_index mod buf_size` (`delay_dsp::Ring::write_slot`) via a
+single `shaders.write_pass(input_tex, uv_scale, send)` with `gl::BLEND` disabled;
+`write.frag.glsl` computes `out_color = u_send * texture(u_input, ...)`. There is
+no `fade_pass` and no `regen` term anywhere in the crate. With Send=1 the slot
+becomes `input` exactly; with Send=0 the slot becomes black (over one lap the whole
+tape clears).
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-PASSTHROUGH
+TITLE: Transparent output
+COMPONENT: Write
+STATEMENT: >>>
+The Write's video output SHALL be a pixel-for-pixel passthrough of its input
+(dry=1, wet=0). The record head is visually transparent — the user sees the
+frame being recorded, never the tape contents. A Write with no matching Tap
+records silently ("into the aether").
+<<<
+RATIONALE: >>>
+At 100% host effect opacity (see COMPOSE-OPACITY) a passthrough output means the
+Write neither adds nor removes anything visible; the loop is monitored solely by
+a Tap on the same Channel.
+<<<
+VERIFICATION: >>>
+After the record passes, `draw_write` binds the host FBO and draws
+`output.draw(..., dry=1.0, wet=0.0)` with the input texture. Output equals input.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-PARAM-CHANNEL
+TITLE: Channel parameter
+COMPONENT: Write
+STATEMENT: >>>
+Param 0 "Channel" SHALL be an Option with values {"1","2"} (default "1"). It
+selects which shared tape this Write records into; a Tap on the same Channel
+forms a loop. Changing it releases the old channel's refcount and acquires the
+new one.
+<<<
+VERIFICATION: >>>
+`PARAM_CHANNEL` Option, default 0.0; `set_param` re-acquires on change;
+`channel()` maps <0.5 -> 0 else 1.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-PARAM-TIME
+TITLE: Time (delay length) parameters
+COMPONENT: Write
+STATEMENT: >>>
+The tape length SHALL be set by a "Sync Mode" Option {Subdivision, Ms, Frames}
+plus the value field for the active mode:
+
+- Subdivision (default): Option of {1/16, 1/8, 1/4, 1/2, 1 bar, 2 bars, 4 bars} in beats {0.25,0.5,1,2,4,8,16}; default 1/4. Frames = `round(beats * (60/BPM) * fps)`, where BPM is host tempo and `fps` is the estimated frame rate (WRITE-FPS-ESTIMATE). If host BPM <= 0 the delay defaults to 30 frames (the chosen subdivision is ignored).
+- Ms: Integer 1..4000 ms (default 500). Frames = `round((ms/1000) * fps)`.
+- Frames: Integer 1..239 (default 30), used directly.
+
+The computed frame count is clamped to `1..=240` inside the Write
+(`compute_delay_frames`); the Core then clamps the effective loop length to
+`1..=239` (CORE-DEPTH). Consequently a request of exactly 240 frames (e.g. Ms=4000
+at 60 fps) latches/reports 240 in the Write while the loop physically runs at 239.
+<<<
+RATIONALE: >>>
+Conceptually one control ("Time"), but exposed as a mode selector plus per-mode
+value fields because FFGL params are flat (see SYS-PARAM-COUNTS). Sweepable/
+continuous time is deferred (F2); Time here is latched (see WRITE-TIME-LATCH).
+<<<
+VERIFICATION: >>>
+Params 1–4 are Sync Mode (Option), Subdivision (Option, encoded `i/6.0`),
+Delay Ms (Integer 1..4000), Delay Frames (Integer 1..239). `compute_delay_frames`
+(`delay-write/src/lib.rs:59-76`) implements the three conversions with `.round()`
+and `d.clamp(1, max)` where `max = dc_buffer_depth() = 240`; the 239 clamp is
+applied downstream in `dc_frame_tick`. The BPM<=0 branch returns
+`30.min(max)`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-TIME-LATCH
+TITLE: Latched delay recomputation
+COMPONENT: Write
+STATEMENT: >>>
+The delay length in frames SHALL be recomputed only when an input to the
+computation actually changes: sync mode, subdivision, ms, frames, a BPM change
+> 0.5, or the first frame. Between changes it is held (latched).
+<<<
+RATIONALE: >>>
+Avoids per-frame jitter in the tape length from noisy BPM/FPS estimates.
+<<<
+VERIFICATION: >>>
+`delay_frames` recomputes only when `changed`; otherwise returns
+`latched_delay`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-FPS-ESTIMATE
+TITLE: FPS estimation for time conversion
+COMPONENT: Write
+STATEMENT: >>>
+The Write SHALL estimate frame rate with an exponential moving average (alpha
+0.05) of instantaneous 1/delta, ignoring deltas <= 0 or >= 1 s, starting from a
+60 fps seed. This estimate converts Ms and Subdivision delays to frames.
+<<<
+VERIFICATION: >>>
+`update_fps` implements the EMA; `fps_estimate` starts at 60.0.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-PARAM-SEND
+TITLE: Send parameter
+COMPONENT: Write
+STATEMENT: >>>
+Param 5 "Send" SHALL be a Standard [0,1] control (default 1) with a linear
+response. It is the dub throw: how hard the current frame commits into the loop
+(`tape = Send * input`). At Send=1 the slot is replaced by the input; pulsing
+Send down (with Tap Wet high) throws intermittent new material while the existing
+tail keeps recirculating through the Tap. At Send=0 nothing new is recorded and
+the tape clears to black over one lap.
+<<<
+RATIONALE: >>>
+Linear so it automates predictably when pulsed/modulated. v0.3 removed the Regen
+parameter (see WRITE-RECORD-MATH); Send is now the Write's only gain, and loop
+sustain is set entirely by the Tap's Wet (LOOP-FEEDBACK-COEFF). CODE DELTA from
+`dcb44c6`: Send moved from param index 6 to 5.
+<<<
+VERIFICATION: >>>
+`send()` returns the raw value; default 1.0; drives the single `write_pass`
+(`tape = send * input`, blend disabled). No fade/additive-blend coefficient
+remains.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-BUFFER-FAIL
+TITLE: Graceful passthrough on allocation failure
+COMPONENT: Write
+STATEMENT: >>>
+If the tape texture is unavailable or has zero size, the Write SHALL still pass
+its input through untouched and perform no record.
+<<<
+VERIFICATION: >>>
+`draw_write` early-returns with a passthrough `output.draw(dry=1,wet=0)` when
+`tex == 0 || buf_size == 0`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: WRITE-TAPE-SCALE
+TITLE: Reduced-resolution tape storage
+COMPONENT: Write
+STATEMENT: >>>
+The Write SHALL size the tape at `TAPE_SCALE` × the incoming frame resolution
+(TAPE_SCALE = 0.5, i.e. half width and height = a quarter of the pixels) and
+record into that reduced-resolution layer. The Write's own video output stays
+full-resolution (WRITE-PASSTHROUGH); only the STORED loop is downscaled. The Tap
+reads the tape with normalised UVs and linear filtering (TAP-READ-MATH,
+`texture(u_buffer, vec3(v_uv, layer))`), so it upscales on read with no Tap-side
+change and no knowledge of the tape resolution.
+<<<
+RATIONALE: >>>
+A quarter of the pixels makes the RGBA16F float tape (CORE-FORMAT, 8 bytes/texel)
+cost about half of the old full-res RGBA8 one, so float precision is affordable at
+1080p — the chosen Crisp<->Deep operating point. It is also a creative control:
+because only the recirculating (Wet) path is re-downsampled each lap while the Dry
+injection stays full-res, the feedback tail softens progressively (classic
+feedback blur) while freshly-injected material stays crisp. The single fixed scale
+avoids adding a param; a live Full/Half/Quarter control is a possible follow-up.
+Downsample is a single bilinear tap, adequate at exactly 0.5× (mild aliasing on
+very fine input detail is masked by the feedback softening; a 2×2 box tap is an
+easy refinement if it matters).
+<<<
+VERIFICATION: >>>
+`delay-write/src/lib.rs`: `TAPE_SCALE == 0.5`; `draw_write` computes
+`tape_w/tape_h = round(TAPE_SCALE * width/height)` (min 1), passes them to
+`dc_frame_tick` (so the Core allocates the tape at those dims), and sets the write
+pass viewport to `tape_w × tape_h` while the passthrough output uses the full host
+viewport. `uv_scale` still targets the full-res input, so the write pass is a
+full-frame downsample into the smaller layer.
+<<<
+STATUS: Built
+
+[TEXT]
+STATEMENT: >>>
+# Delay Tap (DlyT) — read head
+<<<
+
+[REQUIREMENT]
+UID: TAP-IDENTITY
+TITLE: Plugin identity
+COMPONENT: Tap
+STATEMENT: >>>
+The Tap plugin SHALL register with unique id `DlyT` and the exactly-16-byte name
+`"Delay Tap       "`, as an FFGL Effect.
+<<<
+VERIFICATION: >>>
+`plugin_info()` returns `unique_id: b"DlyT"`, `name: b"Delay Tap       "` (16
+bytes), `ty: Effect`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: TAP-READ-MATH
+TITLE: Read equation
+COMPONENT: Tap
+STATEMENT: >>>
+The Tap output SHALL be:
+
+  out = clamp(Dry * source  +  Wet * tape[full-delay], 0, 1)
+
+where `source` is the live input and `tape[full-delay]` is the oldest tape slot.
+Dry and Wet are two independent gains, NOT a crossfade: they can be set freely
+and independently (e.g. full tail AND full new material simultaneously). The
+equation above is the **Perceptual** form; the colour space this sum is computed
+in is selected by the Tap's Blend Space param (TAP-BLEND-SPACE, **default
+Linear**) — in Linear mode `source` and the tape are decoded to ~linear light
+before the sum and the clamped result is re-encoded.
+<<<
+RATIONALE: >>>
+Two independent gains are the decoupling insight of the whole redesign: a single
+blend knob always couples "how much source enters" with "how much loop
+sustains".
+<<<
+VERIFICATION: >>>
+`output.frag.glsl` computes `clamp(u_dry*live + u_wet*buf, 0, 1)`; `draw_tap`
+passes `dry = Dry`, `wet = Wet`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: TAP-READ-SLOT
+TITLE: Fixed full-delay read position
+COMPONENT: Tap
+STATEMENT: >>>
+The Tap SHALL read slot `(frame_index − loop_length) mod buf_size`, which holds
+content exactly `loop_length` frames old — the requested delay, with no
+off-by-one (see CORE-DEPTH). Because the address derives only from the per-frame
+`frame_index` (CORE-ADVANCE) and lands on a different layer from the write slot,
+a Tap reads the same content regardless of its position relative to any Write,
+and regardless of how many Tap/Write instances interleave in the frame. The read
+position is not user-adjustable in this version.
+<<<
+RATIONALE: >>>
+v0.2 decouples the read from draw order. In v0.1 the read slot was the live
+`(wp + 1)` — *identically* the slot the Write overwrote that frame — so a Tap
+read correctly only because it was drawn first, and a Tap→Write→Tap sequence made
+the two Taps read one-frame-different content. Addressing off the frame-scoped
+`frame_index` and landing on a layer the Write never touches removes both
+problems. Placement now affects only signal routing (whether FX re-process the
+tail, COMPOSE-ORDER), never the delay length. Variable/multi-tap is deferred (F1).
+<<<
+VERIFICATION: >>>
+`draw_tap` sets `read_pos = (frame_index + buf_size − loop_length) % buf_size`
+(v0.2; was `(wp + 1) % buf_size` off the pre-advance pointer). Realized age is
+`loop_length` frames (CORE-DEPTH); two Taps bracketing a Write on the same
+Channel read identical content.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: TAP-READ-ONLY
+TITLE: Never mutates tape contents; only advances the frame clock
+COMPONENT: Tap
+STATEMENT: >>>
+The Tap SHALL never write tape pixels; it only reads. It MAY advance the frame
+counter: in v0.2 the Tap calls `dc_frame_tick` at the top of its draw
+(CORE-BARRIER) and, if it is first-of-frame, advances `frame_index` — but it runs
+no fade/record pass and never mutates tape *contents*.
+<<<
+RATIONALE: >>>
+The Tap must participate in the barrier so the frame counter is frame-scoped, not
+Write-scoped (CORE-ADVANCE); advancing a counter is not the same as writing tape
+data, so the read-only-*contents* guarantee still holds.
+<<<
+VERIFICATION: >>>
+`draw_tap` calls `dc_frame_tick` (barrier only), `tex`, `frame_index`,
+`buf_size` — no fade/record pass, no GL write into the tape.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: TAP-EMPTY-BUFFER
+TITLE: Wet muted before the tape exists
+COMPONENT: Tap
+STATEMENT: >>>
+If the tape is unallocated or zero-size, the Tap SHALL force Wet to 0 so only
+`Dry * source` passes; the source is never lost waiting for a buffer.
+<<<
+RATIONALE: >>>
+Removes the seeding chicken-and-egg: the loop fills from the source on lap one
+because the Tap always carries the source (Dry) forward.
+<<<
+VERIFICATION: >>>
+`draw_tap` sets `(read_pos, wet) = (0, 0.0)` when `buf_size == 0 || tex == 0`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: TAP-PARAM-CHANNEL
+TITLE: Channel parameter
+COMPONENT: Tap
+STATEMENT: >>>
+Param 0 "Channel" SHALL be an Option {"1","2"} (default "1") selecting the source
+tape; a Write on the same Channel forms a loop. Changing it re-refcounts as in
+WRITE-PARAM-CHANNEL.
+<<<
+VERIFICATION: >>>
+`PARAM_CHANNEL` Option default 0.0; `set_param` re-acquires on change.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: TAP-PARAM-DRY
+TITLE: Dry parameter
+COMPONENT: Tap
+STATEMENT: >>>
+Param 1 "Dry" SHALL be a Standard [0,1] linear gain (default 1) on the live
+source into the FX chain. Dry is injection only: it never sets the tail. Dry=0
+means no new material enters and the loop rings out per its feedback.
+<<<
+VERIFICATION: >>>
+`dry()` returns raw value; default 1.0; used as `u_dry`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: TAP-PARAM-WET
+TITLE: Wet parameter
+COMPONENT: Tap
+STATEMENT: >>>
+Param 2 "Wet" SHALL be a Standard [0,1] linear gain (default 0.5) on the delayed
+tape read. Wet is the loop feedback that downstream FX re-process each lap. At
+full Send, Wet=1 is an infinite echo and Wet<1 decays.
+<<<
+VERIFICATION: >>>
+`wet()` returns raw value; default 0.5; used as `u_wet` (subject to
+TAP-EMPTY-BUFFER).
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: TAP-BLEND-SPACE
+TITLE: Blend Space parameter (perceptual vs linear)
+COMPONENT: Tap
+STATEMENT: >>>
+Param 3 "Blend Space" SHALL be an Option {"Perceptual","Linear"} (default
+"Linear") selecting the colour space of the Tap's Dry/Wet sum (TAP-READ-MATH):
+
+- Perceptual: `out = clamp(Dry*live + Wet*tape, 0, 1)` on the sRGB-encoded values
+  directly. This is the exact legacy behaviour; the per-lap `×Wet` reads as a
+  perceptually-even fade.
+- Linear: `out = encode(clamp(Dry*decode(live) + Wet*decode(tape), 0, 1))` where
+  `decode(c) = c^g`, `encode(c) = c^(1/g)`, and `g` = 2.2 (a cheap ~sRGB
+  stand-in). The sum and the clamp happen in ~linear light — cleaner colour mixing
+  and additive highlight bloom.
+
+Only the RGB is mapped; alpha blends linearly in both modes. The tape itself is
+unchanged (the Write is still a straight sRGB store, WRITE-RECORD-MATH); the Tap
+decodes the tape on read and the loop re-encodes each lap, so in Linear mode the
+effective loop-feedback coefficient (LOOP-FEEDBACK-COEFF) is `Wet·Send^g` rather
+than `Wet·Send` — a monotonic reshaping of the Send curve, still < 1 for stability.
+<<<
+RATIONALE: >>>
+Now that the model is simplified to a single blend point (Regen removed,
+WRITE-RECORD-MATH), the linear-vs-perceptual choice is a clean, isolated knob: one
+shader branch in the shared output pass plus one Tap param, no Core/ABI/Write
+change. Exposed as a toggle so it can be A/B'd live rather than baked in. The
+`g=2.2` power curve matches the project preference for simple math over an exact
+sRGB piecewise transfer; the exact transfer (and the RGBA16F storage that would
+stop the 8-bit sRGB round-trip from banding over deep feedback) ride with
+DEFER-FLOAT.
+<<<
+VERIFICATION: >>>
+`delay-tap/src/params.rs`: `PARAM_BLEND == 3`, Option default 1.0 (Linear);
+`gamma()` returns 1.0 (Perceptual) or `LINEAR_GAMMA == 2.2` (Linear), passed as `u_gamma` to
+the shared output pass. `output.frag.glsl` takes the exact legacy path when
+`u_gamma == 1.0` and the decode→blend→encode path otherwise. Tier-2 headless-GL
+(`delay-gl-tests` scenario 6): a tape holding 200 with Dry=0, Wet=0.5 reads back
+≈146 in Linear (`255·(0.5·(200/255)^2.2)^(1/2.2)`) vs 100 in Perceptual.
+<<<
+STATUS: Built
+
+[TEXT]
+STATEMENT: >>>
+# Composition, feedback semantics, and usage
+<<<
+
+[REQUIREMENT]
+UID: LOOP-FEEDBACK-COEFF
+TITLE: Total loop-feedback coefficient
+COMPONENT: Composition
+STATEMENT: >>>
+For a Tap and Write on the same Channel with FX of unity gain between them, the
+per-lap feedback coefficient of the loop SHALL be:
+
+  feedback = Send * Wet
+
+feedback >= 1 sustains or blooms; feedback < 1 fades. Injection into the loop is
+`Send * Dry`-scaled source (Write Send and Tap Dry), independent of the tail.
+(With the Tap's Blend Space = Linear, TAP-BLEND-SPACE, the coefficient becomes
+`Send^g * Wet`, g=2.2 — the same runaway/decay conclusions hold, Send is just
+reshaped.)
+<<<
+RATIONALE: >>>
+The single equation that lets a user reason about runaway vs. decay; a derived
+property of WRITE-RECORD-MATH (`tape = Send*input`) and TAP-READ-MATH
+(`out = Dry*source + Wet*tape`), stated here so it can be verified end-to-end, not
+just per-atom. Each lap a signal is multiplied by `Wet` at the Tap read and by
+`Send` at the Write record, so the round-trip gain is exactly `Send * Wet`. v0.3
+made this exact: with Regen removed there is a single feedback path (through the
+Tap), so the v0.2 "two adjacent-frame taps, `≈`" caveat is gone — the coefficient
+is `=`, not `≈`. Loop sustain is now set entirely at the Tap's Wet (at full Send);
+Send only scales how much recirculates and how much fresh material is committed.
+<<<
+VERIFICATION: >>>
+Live: Channel-matched Tap+Write, no FX, Dry=0. With Send=1, Wet=1 -> a still
+image holds indefinitely (infinite echo). With Send=1, Wet=0.5 -> visible
+halving each lap. With Send=0 -> the Write records black, so the tape (and the
+loop) clears over one lap regardless of Wet.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: COMPOSE-OPACITY
+TITLE: 100% opacity usage rule
+COMPONENT: Composition
+STATEMENT: >>>
+All three effects SHALL be used at 100% host effect opacity; all mixing is done
+in-shader. At 100% opacity the host's per-effect opacity crossfade is a no-op, so
+the engine never depends on undefined host-opacity behaviour for FFGL effects.
+<<<
+RATIONALE: >>>
+Host FFGL opacity behaviour was never certain. WRITE-PASSTHROUGH and TAP-READ-
+MATH (the Tap self-samples its input) together ensure the source survives without
+leaning on host opacity — the fragility of the old Read model.
+<<<
+VERIFICATION: >>>
+Observable pass/fail: with a single Tap at Dry=1, Wet=0 at 100% opacity, the
+output frame is identical to the input (bypass) — bit-identical at 1:1 texel
+mapping (`uv_scale == 1`), otherwise identical within resampling tolerance where
+the host texture is hardware-padded (`Width != HardwareWidth`). Verify by frame
+diff. This
+requirement is a *usage rule* the software does not self-enforce; it is
+documented in the manual/release notes and checked by the frame-diff test above,
+not by any runtime guard.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: COMPOSE-ORDER
+TITLE: Tap-first stacking order
+COMPONENT: Composition
+STATEMENT: >>>
+In a feedback stack the Tap SHALL be placed first (upstream of any FX and of the
+Write): `source -> Tap -> fx... -> Write`. In v0.2 this is purely a *signal
+routing* rule, not a timing one: Tap-first is what routes the recirculating tail
+through the FX each lap, so downstream FX re-process the fed-back content. The
+**delay length no longer depends on placement** — because the read address is a
+pure function of the per-frame `frame_index` and lands on a layer the Write never
+touches (TAP-READ-SLOT, CORE-ADVANCE), a Tap reads content `loop_length` frames
+old wherever it sits; a Tap drawn after the Write reads the same delay as one
+drawn before (it merely bypasses the between-Tap-and-Write FX for the fed-back
+content). This is the v0.1→v0.2 change: v0.1 coupled delay length to draw order
+(pre-advance read = `loop_length + 1`, post-advance = `loop_length`); v0.2
+decouples timing from placement entirely.
+<<<
+VERIFICATION: >>>
+Usage rule, not self-enforced. Observable: place the Tap *after* the Write on the
+same Channel and the delay is unchanged (`loop_length` either way, v0.2) but the
+between-Tap-and-Write FX no longer re-process the tail. Consistent with
+TAP-READ-SLOT.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: COMPOSE-GLSTATE
+TITLE: Host GL state preservation
+COMPONENT: System
+STATEMENT: >>>
+Each plugin SHALL save and restore the host GL state it disturbs around its draw:
+the bound framebuffer, the viewport, the SCISSOR_TEST / BLEND / DEPTH_TEST
+enables, and the active texture unit plus its `GL_TEXTURE0` binding. It shares the
+GL context with Resolume.
+<<<
+RATIONALE: >>>
+v0.3 RESOLVES the v0.2 open GL-state gap by shrinking the surface and widening the
+restore. Because the Write is now a pure overwrite with blend DISABLED
+(WRITE-RECORD-MATH), neither plugin mutates `BlendFunc` or `BlendColor` at all —
+the old `CONSTANT_COLOR, ONE` additive blend is gone — so there is nothing there
+to leak. Both plugins now also snapshot and restore the active texture unit and
+the `GL_TEXTURE0` binding (bind during a pass, then put back the host's prior
+texture, not 0), satisfying the project convention that the host's unit-0 texture
+must never be left unbound. The remaining disturbed state (FBO, viewport, the
+three enables) is snapshotted and restored exactly.
+<<<
+VERIFICATION: >>>
+Both `draw` methods (`delay-write/src/lib.rs`, `delay-tap/src/lib.rs`) snapshot
+`FRAMEBUFFER_BINDING`, `VIEWPORT`, the SCISSOR/BLEND/DEPTH_TEST enables, and
+`ACTIVE_TEXTURE` + `TEXTURE_BINDING_2D` on unit 0, and restore exactly those.
+Neither calls `gl::BlendFunc` or `gl::BlendColor`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: SYS-DEPLOY
+TITLE: Co-located deployment of three DLLs
+COMPONENT: System
+STATEMENT: >>>
+`delay_core.dll` SHALL be deployed beside both plugin DLLs (`DlyW`, `DlyT`),
+because each plugin runtime-loads the core from its own directory. All three
+ship together.
+<<<
+VERIFICATION: >>>
+Build/deploy places `delay_core.dll`, `delay-write.dll`, `delay-tap.dll` in the
+same plugin directory; plugins load the core via `pluglib`.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: SYS-MIGRATION
+TITLE: Migration from unified DLMd
+COMPONENT: System
+STATEMENT: >>>
+Existing `DLMd` compositions have no automatic migration; they SHALL be rebuilt
+onto the two-plugin Tap+Write model. This is a documented breaking change.
+<<<
+VERIFICATION: >>>
+Deployment guidance, not a software behaviour. Observable: there is no shared
+save/preset format between `DLMd` and `DlyW`/`DlyT`, so an old composition loads
+`DLMd` (if still installed) unchanged and must be re-patched by hand. Verified by
+the absence of any `DLMd`->`DlyW/DlyT` conversion path in code or release tooling.
+<<<
+STATUS: Draft
+
+[REQUIREMENT]
+UID: SYS-PARAM-COUNTS
+TITLE: Fixed FFGL parameter counts
+COMPONENT: System
+STATEMENT: >>>
+The Write plugin SHALL expose exactly 6 FFGL parameters (indices 0..5: Channel,
+Sync Mode, Subdivision, Delay Ms, Delay Frames, Send) and the Tap plugin exactly
+4 (indices 0..3: Channel, Dry, Wet, Blend Space). The "minimum playable control
+surface" / "two-atom" framing counts *conceptual* knobs — Channel, Time, Send on
+the Write and Channel, Dry, Wet, Blend Space on the Tap — where the single
+conceptual "Time" control is realised as 4 flat FFGL params (Sync Mode + the three
+per-mode value fields) because FFGL parameters are a flat list with no grouping.
+The four *level/time* knobs across a loop are Time, Send, Dry, Wet; Blend Space
+(TAP-BLEND-SPACE) is a mode toggle, not a level.
+<<<
+RATIONALE: >>>
+Pins the exact host-visible surface so it can be checked, and explicitly
+reconciles the prose "two-atom" language with the 6+3 flat param reality so a
+reviewer is not left to guess whether the counts are a defect. CODE DELTA from
+`dcb44c6`: v0.3 removed the `Regen` param (WRITE-RECORD-MATH), dropping the Write
+from 7 params to 6 and re-indexing Send from 6 to 5.
+<<<
+VERIFICATION: >>>
+`delay-write/src/params.rs`: `NUM_PARAMS == 6` (no `PARAM_REGEN`; `PARAM_SEND ==
+5`); `delay-tap/src/params.rs`: `NUM_PARAMS == 4` (`PARAM_BLEND == 3`). Each
+plugin's `num_params()` returns that constant.
+<<<
+STATUS: Built
+
+[REQUIREMENT]
+UID: COMPOSE-SINGLE-WRITER
+TITLE: Single writer per channel
+COMPONENT: Composition
+STATEMENT: >>>
+v3 SHALL be used with at most one Delay Write per Channel. Placing two or more
+Writes on the same Channel is unsupported: each additional Write, seen by the
+Core as a same-frame (non-first) touch, does not advance the frame counter but
+still runs its own overwrite pass into the write slot
+(`frame_index mod buf_size`). Because the record is now a straight overwrite
+(`tape = Send * input`, WRITE-RECORD-MATH), the slot ends up holding whichever
+Write drew last (last-writer-wins) at that Write's own Send and input; the outcome
+depends on draw order and is not a supported gesture in v3.
+<<<
+RATIONALE: >>>
+Deterministic multi-writer accumulation (N Writes summing into one slot) is the
+deferred additive-IFS feature (DEFER-IFS). The barrier that would make it
+deterministic exists but is not exercised here; this requirement makes the
+current degenerate behaviour explicit rather than silently wrong. v0.3 note: with
+the fade+additive record replaced by a straight overwrite, the degenerate result
+is a draw-order-dependent last-writer-wins rather than the old compounding
+decay-and-add — still undefined for the user, but simpler.
+<<<
+VERIFICATION: >>>
+`dc_frame_tick` returns 0 (no advance) for the 2nd+ touch of a `frame_id`
+(`delay-core/src/lib.rs`), but `draw_write` unconditionally runs its single
+`write_pass` every frame (`delay-write/src/lib.rs`), so two Writes on one Channel
+each overwrite the same slot in draw order and the last one wins.
+<<<
+STATUS: Draft
+
+[TEXT]
+STATEMENT: >>>
+# Non-goals (deferred to fast-follow)
+<<<
+
+[REQUIREMENT]
+UID: DEFER-MULTITAP
+TITLE: Variable and multi-tap
+COMPONENT: Tap
+STATEMENT: >>>
+Variable tap offset (0..loop) and K combined taps are OUT OF SCOPE for v3. The
+Tap read position is fixed at full delay.
+<<<
+STATUS: Deferred
+
+[REQUIREMENT]
+UID: DEFER-FLOAT
+TITLE: Over-unity persistence and the resolution↔depth budget
+COMPONENT: Core
+STATEMENT: >>>
+The precision half of the original DEFER-FLOAT has LANDED: the tape is now RGBA16F
+(CORE-FORMAT) stored at reduced resolution (WRITE-TAPE-SCALE), removing feedback-
+tail banding at ~half the old VRAM. What remains OUT OF SCOPE for v3:
+(a) over-unity (>1.0) *persistence* across laps — blocked by the host's 8-bit
+inter-effect FBO in the loop and the overwrite-Write; needs host float compositing
+and/or additive accumulation (DEFER-IFS); and (b) trading tape resolution for a
+deeper buffer / longer max delay (a dynamic `BUFFER_DEPTH` driven by the scale) —
+the tape scale is currently a fixed 0.5×, and a live Crisp<->Deep control is a
+possible follow-up.
+<<<
+STATUS: Deferred
+
+[REQUIREMENT]
+UID: DEFER-SWEEP
+TITLE: Sweepable continuous time
+COMPONENT: Write
+STATEMENT: >>>
+Continuous/interpolated time sweeps are OUT OF SCOPE for v3. Time is latched
+beat-sync / ms / frames.
+<<<
+STATUS: Deferred
+
+[REQUIREMENT]
+UID: DEFER-PALETTE
+TITLE: Raw palette controls
+COMPONENT: Core
+STATEMENT: >>>
+Wrap mode (clamp/repeat/mirror), filter (nearest/linear), and no-clear-on-
+realloc are OUT OF SCOPE for v3.
+<<<
+STATUS: Deferred
+
+[REQUIREMENT]
+UID: DEFER-IFS
+TITLE: Additive multi-writer IFS accumulation
+COMPONENT: Core
+STATEMENT: >>>
+N Writes summing deterministically into one slot per frame (contractive IFS
+attractors, absorbing the old overdub feature) is OUT OF SCOPE for v3. v3 is
+single-writer-per-channel; the barrier's multi-writer determinism is present but
+unexercised.
+<<<
+STATUS: Deferred
+
+[REQUIREMENT]
+UID: DEFER-CHANNELS
+TITLE: Channel count 4–8
+COMPONENT: Core
+STATEMENT: >>>
+Increasing `NUM_CHANNELS` beyond 2 is OUT OF SCOPE for v3 (VRAM-heavy).
+<<<
+STATUS: Deferred
+

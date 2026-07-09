@@ -16,9 +16,9 @@ pub struct Api {
     pub buffer_depth: extern "C" fn() -> u32,
     pub acquire: extern "C" fn(usize),
     pub release: extern "C" fn(usize),
-    pub begin_frame_write: extern "C" fn(usize, u32, u32, u32, u64) -> u32,
+    pub frame_tick: extern "C" fn(usize, u32, u32, u32, u64) -> u32,
     pub tex: extern "C" fn(usize) -> u32,
-    pub write_pos: extern "C" fn(usize) -> u32,
+    pub frame_index: extern "C" fn(usize) -> u64,
     pub buf_size: extern "C" fn(usize) -> u32,
 }
 // The bound fn pointers live in one process; sharing the table across threads is
@@ -98,9 +98,9 @@ fn load() -> Api {
             buffer_depth: proc!("dc_buffer_depth"),
             acquire: proc!("dc_acquire"),
             release: proc!("dc_release"),
-            begin_frame_write: proc!("dc_begin_frame_write"),
+            frame_tick: proc!("dc_frame_tick"),
             tex: proc!("dc_tex"),
-            write_pos: proc!("dc_write_pos"),
+            frame_index: proc!("dc_frame_index"),
             buf_size: proc!("dc_buf_size"),
         }
     }
@@ -165,9 +165,9 @@ fn load() -> Api {
             buffer_depth: proc!("dc_buffer_depth"),
             acquire: proc!("dc_acquire"),
             release: proc!("dc_release"),
-            begin_frame_write: proc!("dc_begin_frame_write"),
+            frame_tick: proc!("dc_frame_tick"),
             tex: proc!("dc_tex"),
-            write_pos: proc!("dc_write_pos"),
+            frame_index: proc!("dc_frame_index"),
             buf_size: proc!("dc_buf_size"),
         }
     }

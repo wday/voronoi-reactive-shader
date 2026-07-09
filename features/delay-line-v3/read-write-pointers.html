@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>*{margin:0;padding:0;box-sizing:border-box}img{max-width:100%}</style>
+<title>Delay Line v3 — Read/Write Pointer Mechanics</title>
+<style>
+  :root {
+    --bg: #f5f7f9;
+    --panel: #ffffff;
+    --panel-2: #eef1f4;
+    --ink: #161b20;
+    --ink-soft: #59636e;
+    --ink-faint: #8b95a0;
+    --line: #d7dde3;
+    --line-soft: #e6eaef;
+    --write: #d24a30;
+    --write-soft: rgba(210, 74, 48, 0.12);
+    --read: #0e93a8;
+    --read-soft: rgba(14, 147, 168, 0.12);
+    --stamp: #3f4b57;
+    --good: #2e8b57;
+    --shadow: 0 1px 2px rgba(20,30,40,.06), 0 8px 28px rgba(20,30,40,.06);
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c1015;
+      --panel: #141a21;
+      --panel-2: #10151b;
+      --ink: #e7edf3;
+      --ink-soft: #97a3af;
+      --ink-faint: #667080;
+      --line: #253039;
+      --line-soft: #1c242c;
+      --write: #ff6a4d;
+      --write-soft: rgba(255, 106, 77, 0.15);
+      --read: #33c3d8;
+      --read-soft: rgba(51, 195, 216, 0.15);
+      --stamp: #aeb9c4;
+      --good: #4cc98a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f7f9; --panel: #ffffff; --panel-2: #eef1f4; --ink: #161b20;
+    --ink-soft: #59636e; --ink-faint: #8b95a0; --line: #d7dde3; --line-soft: #e6eaef;
+    --write: #d24a30; --write-soft: rgba(210,74,48,.12); --read: #0e93a8;
+    --read-soft: rgba(14,147,168,.12); --stamp: #3f4b57; --good: #2e8b57;
+    --shadow: 0 1px 2px rgba(20,30,40,.06), 0 8px 28px rgba(20,30,40,.06);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c1015; --panel: #141a21; --panel-2: #10151b; --ink: #e7edf3;
+    --ink-soft: #97a3af; --ink-faint: #667080; --line: #253039; --line-soft: #1c242c;
+    --write: #ff6a4d; --write-soft: rgba(255,106,77,.15); --read: #33c3d8;
+    --read-soft: rgba(51,195,216,.15); --stamp: #aeb9c4; --good: #4cc98a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: clamp(20px, 4vw, 56px) clamp(16px, 4vw, 40px) 80px; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  h1 {
+    font-size: clamp(26px, 4.4vw, 40px); line-height: 1.08; margin: 10px 0 0;
+    letter-spacing: -0.02em; text-wrap: balance; font-weight: 680;
+  }
+  .lede { color: var(--ink-soft); max-width: 62ch; margin: 16px 0 0; font-size: 16.5px; }
+
+  /* stack ribbon */
+  .stack {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 26px 0 0; font-family: var(--mono); font-size: 13px;
+  }
+  .node {
+    padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--panel); box-shadow: var(--shadow); white-space: nowrap;
+  }
+  .node.tap { border-color: var(--read); color: var(--read); background: var(--read-soft); font-weight: 600; }
+  .node.write { border-color: var(--write); color: var(--write); background: var(--write-soft); font-weight: 600; }
+  .node.plain { color: var(--ink-soft); }
+  .arrow { color: var(--ink-faint); font-family: var(--mono); }
+
+  section { margin-top: 46px; }
+  h2 {
+    font-size: 13px; font-family: var(--mono); text-transform: uppercase;
+    letter-spacing: .14em; color: var(--ink-soft); margin: 0 0 6px;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  h2 .num { color: var(--ink-faint); }
+  .h2sub { font-size: 20px; font-family: var(--sans); text-transform: none; letter-spacing: -0.01em; color: var(--ink); font-weight: 640; margin: 4px 0 14px; }
+  p.note { color: var(--ink-soft); max-width: 64ch; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; box-shadow: var(--shadow);
+  }
+
+  /* ring interactive */
+  .sim { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 0; overflow: hidden; }
+  @media (max-width: 720px) { .sim { grid-template-columns: 1fr; } }
+  .ringpane { padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; border-right: 1px solid var(--line-soft); }
+  @media (max-width: 720px) { .ringpane { border-right: none; border-bottom: 1px solid var(--line-soft); } }
+  canvas { width: 100%; height: auto; max-width: 380px; touch-action: manipulation; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  button {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    padding: 9px 15px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--ink); cursor: pointer;
+    transition: transform .06s ease, border-color .15s ease, background .15s ease;
+  }
+  button:hover { border-color: var(--ink-faint); }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:focus-visible { outline: 2px solid var(--read); outline-offset: 2px; }
+
+  .readout { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+  .rline { display: grid; grid-template-columns: 108px 1fr; gap: 10px; align-items: baseline; }
+  .rlabel { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .rval { font-family: var(--mono); font-size: 15px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .rval.write { color: var(--write); }
+  .rval.read { color: var(--read); }
+  .narr {
+    margin-top: 2px; padding: 12px 14px; border-radius: 9px;
+    background: var(--panel-2); border: 1px solid var(--line-soft);
+    font-size: 13.5px; color: var(--ink-soft); min-height: 68px;
+  }
+  .narr b.w { color: var(--write); }
+  .narr b.r { color: var(--read); }
+  .chip { display:inline-block; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--good); color: #fff; font-weight: 700; letter-spacing: .03em; }
+
+  /* legend */
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .dot.w { background: var(--write); }
+  .dot.r { background: var(--read); }
+  .dot.f { background: var(--stamp); }
+
+  /* trace table */
+  .tablewrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13px; background: var(--panel); }
+  th, td { padding: 9px 14px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; border-bottom: 1px solid var(--line); text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr + tr td { border-top: 1px solid var(--line-soft); }
+  td.wcol { color: var(--write); }
+  td.rcol { color: var(--read); }
+  td.empty { color: var(--ink-faint); }
+  tr.seed { background: var(--read-soft); }
+  tr.seed td.agecol { color: var(--good); font-weight: 700; }
+  .tcap { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); margin: 10px 2px 0; }
+
+  /* equations */
+  .eqs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 620px) { .eqs { grid-template-columns: 1fr; } }
+  .eq { padding: 16px 18px; }
+  .eq .cap { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px; }
+  .eq code { font-family: var(--mono); font-size: 14px; color: var(--ink); display: block; line-height: 1.7; word-break: break-word; }
+  .eq code em { font-style: normal; color: var(--write); }
+  .eq code b { font-weight: 700; color: var(--read); }
+  .eq .whom { font-size: 12.5px; color: var(--ink-soft); margin-top: 10px; }
+  .eq.full { grid-column: 1 / -1; border: 1px dashed var(--line); background: transparent; }
+
+  /* callout */
+  .callout {
+    margin-top: 22px; padding: 18px 20px; border-radius: 12px;
+    border: 1px solid var(--write); background: var(--write-soft);
+  }
+  .callout .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--write); font-weight: 700; }
+  .callout p { margin: 8px 0 0; color: var(--ink); font-size: 14px; max-width: 70ch; }
+  .callout code { font-family: var(--mono); background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+
+  .foot { margin-top: 54px; padding-top: 18px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--ink-faint); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  a.ref { color: var(--read); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="eyebrow">Delay Line v3 · DLV3 · spec confirmation</div>
+  <h1>How the read &amp; write pointers share one tape</h1>
+  <p class="lede">A single GPU ring buffer, one <b>write position</b> per channel. The record head advances it; the read head trails it by one slot. Draw order is the whole trick — and it's what makes the realized delay land at <code>loop_length&nbsp;+&nbsp;1</code>.</p>
+
+  <div class="stack" aria-label="effect stack order">
+    <span class="node plain">source</span><span class="arrow">→</span>
+    <span class="node tap">Delay Tap · read</span><span class="arrow">→</span>
+    <span class="node plain">fx…</span><span class="arrow">→</span>
+    <span class="node write">Delay Write · record</span><span class="arrow">→</span>
+    <span class="node plain">output</span>
+  </div>
+
+  <!-- ============ INTERACTIVE RING ============ -->
+  <section>
+    <h2><span class="num">01</span> The ring, one host frame at a time</h2>
+    <div class="h2sub">Step the clock and watch <span style="color:var(--write)">wp</span> chase the <span style="color:var(--read)">read slot</span> around the tape</div>
+    <p class="note">Ring of <code>buf_size = loop_length + 1</code> slots (shown here at <code>buf_size = 6</code>, so <code>loop_length = 5</code>). Each host frame the Tap reads slot <code>(wp+1) mod buf_size</code> using the <b>pre-advance</b> <code>wp</code>; then the Write advances <code>wp</code> to that very slot and overwrites it. Read-before-write is guaranteed by the Tap being drawn first.</p>
+
+    <div class="card sim">
+      <div class="ringpane">
+        <canvas id="ring" width="760" height="760" role="img" aria-label="Ring buffer diagram showing write and read pointers"></canvas>
+        <div class="controls">
+          <button id="step" class="primary">Step frame ▸</button>
+          <button id="play">Auto ▸▸</button>
+          <button id="reset">Reset</button>
+        </div>
+        <div class="legend">
+          <span><i class="dot w"></i> write head (wp)</span>
+          <span><i class="dot r"></i> read head (wp+1)</span>
+          <span><i class="dot f"></i> stored frame</span>
+        </div>
+      </div>
+      <div class="readout">
+        <div class="rline"><span class="rlabel">Host frame</span><span class="rval" id="ro-frame">—</span></div>
+        <div class="rline"><span class="rlabel">wp (pre)</span><span class="rval write" id="ro-wppre">—</span></div>
+        <div class="rline"><span class="rlabel">Read slot</span><span class="rval read" id="ro-read">(wp+1) = —</span></div>
+        <div class="rline"><span class="rlabel">wp advances</span><span class="rval write" id="ro-wppost">—</span></div>
+        <div class="rline"><span class="rlabel">Realized age</span><span class="rval" id="ro-age">—</span></div>
+        <div class="narr" id="ro-narr">Press <b>Step frame</b>. On frame 1 the tape is empty, so the read comes up blank and the Tap carries only the live source (its Wet is auto-muted until the buffer fills).</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TRACE TABLE ============ -->
+  <section>
+    <h2><span class="num">02</span> Frame-by-frame trace</h2>
+    <div class="h2sub">The same simulation as a ledger — proving read slot ≡ write slot, and age = buf_size</div>
+    <p class="note">Notice columns <b style="color:var(--read)">read slot</b> and <b style="color:var(--write)">writes slot</b> are <em>identical every row</em>: the Tap reads exactly the slot the Write is about to clobber — but a frame earlier in draw order. Content only starts coming back once the ring has been lapped; from then on its age is a constant <code>buf_size = loop_length + 1 = 6</code> frames.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Frame F</th>
+            <th>wp (pre)</th>
+            <th>read slot<br>(wp+1)</th>
+            <th>wp → advances</th>
+            <th>writes slot</th>
+            <th>content read</th>
+            <th>age</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <p class="tcap">buf_size = 6 · rows highlighted where the first recirculated frame returns (age reaches buf_size).</p>
+  </section>
+
+  <!-- ============ EQUATIONS ============ -->
+  <section>
+    <h2><span class="num">03</span> What each head computes</h2>
+    <div class="h2sub">Two independent gains at the read, a gated crossfade at the write</div>
+    <div class="eqs">
+      <div class="card eq">
+        <div class="cap" style="color:var(--read)">Delay Tap — read (TAP-READ-MATH)</div>
+        <code>out = clamp( <b>Dry</b>·source + <b>Wet</b>·tape[wp+1] , 0, 1 )</code>
+        <div class="whom">Dry and Wet are <b>independent</b> gains, not a crossfade — full new material and full tail can run at once. Wet is force-muted while the tape is empty.</div>
+      </div>
+      <div class="card eq">
+        <div class="cap" style="color:var(--write)">Delay Write — record (WRITE-RECORD-MATH)</div>
+        <code>tape[slot] = (1−<em>Send</em>)·<em>Regen</em>·old + <em>Send</em>·input</code>
+        <div class="whom">A fade pre-pass scales the slot by <code>(1−Send)·Regen</code>, then an additive <code>CONSTANT_COLOR = Send</code> write lays the input in. Regen is gated by <code>(1−Send)</code> so the two feedback paths can't double-count.</div>
+      </div>
+      <div class="card eq full">
+        <div class="cap">Per-lap loop feedback (LOOP-FEEDBACK-COEFF) — Tap + Write on the same channel</div>
+        <code>feedback = (1−<em>Send</em>)·<em>Regen</em> + <em>Send</em>·<b>Wet</b>&nbsp;&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;&nbsp;injection = <em>Send</em>·<b>Dry</b>·source</code>
+        <div class="whom">≥ 1 sustains or blooms, &lt; 1 fades. At <em>Send</em> = 1 the tail is governed by <b>Wet</b> alone (Regen drops out).</div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="tag">⚠ Known off-by-one · CORE-DEPTH (open for the user to rule on)</div>
+      <p>The read slot <code>(wp+1) mod buf_size</code> is <em>identically</em> the slot this frame's Write advances into. What keeps the read clean is <b>draw order</b> (Tap before Write), <em>not</em> a spare slot. The lone effect of <code>buf_size = loop_length + 1</code> is that realized delay is <code>loop_length + 1</code>, not <code>loop_length</code>. Fix is a one-line choice: set <code>buf_size = loop_length</code> so the delay matches the knob, or state in the UI that delay is <code>loop_length + 1</code>. The spec currently describes the as-built <code>+1</code> behaviour.</p>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>Confirms: TAP-READ-SLOT · CORE-ADVANCE · COMPOSE-ORDER · CORE-DEPTH</span>
+    <span>branch delay-line-v3 · dcb44c6</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var N = 6;                 // buf_size = loop_length + 1  (loop_length = 5)
+  var FRAMES = 8;            // trace length
+  var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- single source of truth: simulate the ring exactly like the core ----
+  function simulate(n, count) {
+    var wp = 0, slots = new Array(n).fill(null), steps = [];
+    for (var F = 1; F <= count; F++) {
+      var wpPre = wp;
+      var readPos = (wp + 1) % n;
+      var readFrame = slots[readPos];          // frame stamp stored there, or null
+      var age = readFrame === null ? null : (F - readFrame);
+      wp = (wp + 1) % n;                        // Write: advance once (first writer)
+      var wrote = wp;                           // record into just-advanced slot
+      slots[wrote] = F;
+      steps.push({ F: F, wpPre: wpPre, readPos: readPos, wpPost: wp,
+                   wrote: wrote, readFrame: readFrame, age: age });
+    }
+    return steps;
+  }
+  var steps = simulate(N, FRAMES);
+
+  // ---- render the trace table ----
+  var tbody = document.getElementById("tbody");
+  steps.forEach(function (s) {
+    var seed = s.age === N;                     // first true recirculation
+    var tr = document.createElement("tr");
+    if (seed) tr.className = "seed";
+    var content = s.readFrame === null
+      ? '<td class="empty">— empty</td><td class="empty">—</td>'
+      : '<td>frame ' + s.readFrame + '</td><td class="agecol">' + s.age + '</td>';
+    tr.innerHTML =
+      '<td>' + s.F + '</td>' +
+      '<td class="wcol">' + s.wpPre + '</td>' +
+      '<td class="rcol">' + s.readPos + '</td>' +
+      '<td class="wcol">' + s.wpPost + '</td>' +
+      '<td class="wcol">' + s.wrote + '</td>' +
+      content;
+    tbody.appendChild(tr);
+  });
+
+  // ---- interactive ring ----
+  var canvas = document.getElementById("ring");
+  var ctx = canvas.getContext("2d");
+  var DIM = 760, cx = DIM / 2, cy = DIM / 2, R = 250, NODE = 46;
+  var cssvar = function (name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); };
+
+  // state
+  var idx = -1;                 // index into steps of the *current* completed frame; -1 = fresh
+  var slots = new Array(N).fill(null);
+  var wp = 0;
+  var phase = "idle";           // idle | read | write
+  var cur = null;               // current step being animated
+  var timers = [];
+
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+
+  function slotAngle(i) { return -Math.PI / 2 + i * (2 * Math.PI / N); }
+  function slotXY(i, rad) {
+    var a = slotAngle(i);
+    return { x: cx + Math.cos(a) * (rad === undefined ? R : rad), y: cy + Math.sin(a) * (rad === undefined ? R : rad) };
+  }
+
+  function draw() {
+    var C = {
+      ink: cssvar("--ink"), soft: cssvar("--ink-soft"), faint: cssvar("--ink-faint"),
+      line: cssvar("--line"), panel: cssvar("--panel"), panel2: cssvar("--panel-2"),
+      write: cssvar("--write"), read: cssvar("--read"), stamp: cssvar("--stamp"), bg: cssvar("--bg")
+    };
+    ctx.clearRect(0, 0, DIM, DIM);
+
+    // guide ring
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, 2 * Math.PI);
+    ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.setLineDash([4, 7]); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // advance-direction arc arrow (clockwise, top)
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 40, -Math.PI / 2 - 0.5, -Math.PI / 2 + 0.5);
+    ctx.strokeStyle = C.faint; ctx.lineWidth = 2; ctx.stroke();
+    var tip = slotXY(0, R + 40); // near top
+    var ta = -Math.PI / 2 + 0.5;
+    var tx = cx + Math.cos(ta) * (R + 40), ty = cy + Math.sin(ta) * (R + 40);
+    ctx.save(); ctx.translate(tx, ty); ctx.rotate(ta + Math.PI / 2);
+    ctx.beginPath(); ctx.moveTo(0, -7); ctx.lineTo(6, 4); ctx.lineTo(-6, 4); ctx.closePath();
+    ctx.fillStyle = C.faint; ctx.fill(); ctx.restore();
+    ctx.fillStyle = C.faint; ctx.font = "600 20px " + cssvar("--mono");
+    ctx.textAlign = "center"; ctx.fillText("advance →", cx, cy - R - 58);
+
+    var readPos = (wp + 1) % N;
+
+    // nodes
+    for (var i = 0; i < N; i++) {
+      var p = slotXY(i);
+      var isRead = (phase !== "idle" && cur && i === cur.readPos) || (phase === "idle" && i === readPos);
+      var isWrite = (phase === "write" && cur && i === cur.wrote) || (phase === "idle" && i === wp && idx >= 0);
+
+      // fill
+      ctx.beginPath(); ctx.arc(p.x, p.y, NODE, 0, 2 * Math.PI);
+      ctx.fillStyle = slots[i] === null ? C.panel2 : C.panel;
+      ctx.fill();
+
+      // outline: read highlight wins during read phase, write during write phase
+      var ow = 3, oc = C.line;
+      if (isRead && (phase === "read" || phase === "idle")) { oc = C.read; ow = 5; }
+      if (isWrite) { oc = C.write; ow = 5; }
+      ctx.lineWidth = ow; ctx.strokeStyle = oc; ctx.stroke();
+
+      // slot index (small, top of node)
+      ctx.fillStyle = C.faint; ctx.font = "600 15px " + cssvar("--mono");
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("s" + i, p.x, p.y - 20);
+
+      // stored frame stamp
+      ctx.font = "700 26px " + cssvar("--mono");
+      if (slots[i] === null) { ctx.fillStyle = C.faint; ctx.fillText("·", p.x, p.y + 8); }
+      else { ctx.fillStyle = C.stamp; ctx.fillText("f" + slots[i], p.x, p.y + 8); }
+    }
+
+    // read pointer (outer), write pointer (inner)
+    drawPointer(readPos, R + NODE + 6, C.read, "READ", "out", C);
+    if (idx >= 0 || phase !== "idle") {
+      var wref = (phase === "write" && cur) ? cur.wrote : wp;
+      drawPointer(wref, R - NODE - 6, C.write, "wp", "in", C);
+    }
+
+    // center label
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = C.faint; ctx.font = "600 17px " + cssvar("--mono");
+    ctx.fillText("buf_size = " + N, cx, cy - 20);
+    ctx.fillStyle = C.ink; ctx.font = "700 30px " + cssvar("--mono");
+    ctx.fillText(idx < 0 ? "frame —" : "frame " + steps[idx].F, cx, cy + 12);
+    ctx.fillStyle = C.soft; ctx.font = "500 15px " + cssvar("--mono");
+    ctx.fillText("read = (wp+1)%" + N, cx, cy + 40);
+  }
+
+  function drawPointer(i, rad, color, label, dir, C) {
+    var a = slotAngle(i);
+    var x = cx + Math.cos(a) * rad, y = cy + Math.sin(a) * rad;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2);
+    ctx.beginPath();
+    if (dir === "out") { ctx.moveTo(0, 13); ctx.lineTo(11, 30); ctx.lineTo(-11, 30); }
+    else { ctx.moveTo(0, -13); ctx.lineTo(11, -30); ctx.lineTo(-11, -30); }
+    ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+    ctx.restore();
+    var lr = dir === "out" ? rad + 40 : rad - 40;
+    var lx = cx + Math.cos(a) * lr, ly = cy + Math.sin(a) * lr;
+    ctx.fillStyle = color; ctx.font = "700 18px " + cssvar("--mono");
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(label, lx, ly);
+  }
+
+  // ---- readout DOM ----
+  var el = {
+    frame: document.getElementById("ro-frame"), wppre: document.getElementById("ro-wppre"),
+    read: document.getElementById("ro-read"), wppost: document.getElementById("ro-wppost"),
+    age: document.getElementById("ro-age"), narr: document.getElementById("ro-narr")
+  };
+  function setReadout(s, live) {
+    if (!s) {
+      el.frame.textContent = "—"; el.wppre.textContent = "—";
+      el.read.textContent = "(wp+1) = —"; el.wppost.textContent = "—";
+      el.age.textContent = "—";
+      el.narr.innerHTML = 'Press <b>Step frame</b>. On frame 1 the tape is empty, so the read comes up blank and the Tap carries only the live source (its Wet is auto-muted until the buffer fills).';
+      return;
+    }
+    el.frame.textContent = s.F;
+    el.wppre.textContent = s.wpPre;
+    el.read.textContent = "(" + s.wpPre + "+1) = " + s.readPos;
+    el.wppost.textContent = s.wpPre + " → " + s.wpPost;
+    if (s.readFrame === null) {
+      el.age.textContent = "— (empty)";
+      el.narr.innerHTML = 'Tap reads <b class="r">slot ' + s.readPos + '</b> — still empty this early. Write then advances <b class="w">wp to ' + s.wpPost + '</b> (same slot) and records <b class="w">frame ' + s.F + '</b> there. Read happened first, so the read stayed clean.';
+    } else if (s.age === N) {
+      el.age.textContent = s.age + " frames  = buf_size";
+      el.narr.innerHTML = '<span class="chip">FULL LAP</span> Tap reads <b class="r">slot ' + s.readPos + '</b> and gets back <b>frame ' + s.readFrame + '</b> — recorded <b>' + s.age + ' frames ago</b>. That is <code>loop_length + 1 = ' + N + '</code>: the realized delay. Write then overwrites that same slot with frame ' + s.F + '.';
+    } else {
+      el.age.textContent = s.age + " frames";
+      el.narr.innerHTML = 'Tap reads <b class="r">slot ' + s.readPos + '</b> → frame ' + s.readFrame + ' (' + s.age + ' frames old). Write advances <b class="w">wp to ' + s.wpPost + '</b> and re-records it.';
+    }
+  }
+
+  // ---- stepping ----
+  function commit(s) {                 // apply the advance+write of step s to slot state
+    wp = s.wpPost;
+    slots[s.wrote] = s.F;
+  }
+
+  function step() {
+    if (idx >= steps.length - 1) return;
+    clearTimers();
+    var s = steps[idx + 1];
+    cur = s;
+
+    if (reduce) {
+      commit(s); idx++; phase = "idle"; cur = null;
+      setReadout(s, false); draw();
+      return;
+    }
+    // phase 1: highlight the read
+    phase = "read";
+    setReadout(s, true); draw();
+    // phase 2: advance + write
+    timers.push(setTimeout(function () {
+      commit(s); idx++; phase = "write"; draw();
+      timers.push(setTimeout(function () { phase = "idle"; cur = null; draw(); }, 520));
+    }, 620));
+  }
+
+  function reset() {
+    clearTimers();
+    idx = -1; slots = new Array(N).fill(null); wp = 0; phase = "idle"; cur = null;
+    stopAuto(); setReadout(null); draw();
+  }
+
+  // ---- auto play ----
+  var auto = null;
+  var playBtn = document.getElementById("play");
+  function stopAuto() { if (auto) { clearInterval(auto); auto = null; playBtn.textContent = "Auto ▸▸"; } }
+  function toggleAuto() {
+    if (auto) { stopAuto(); return; }
+    if (idx >= steps.length - 1) reset();
+    playBtn.textContent = "Pause ▮▮";
+    auto = setInterval(function () {
+      if (idx >= steps.length - 1) { stopAuto(); return; }
+      step();
+    }, reduce ? 700 : 1500);
+  }
+
+  document.getElementById("step").addEventListener("click", function () { stopAuto(); step(); });
+  document.getElementById("reset").addEventListener("click", reset);
+  playBtn.addEventListener("click", toggleAuto);
+
+  // redraw on theme toggle (tokens change)
+  var mo = new MutationObserver(function () { draw(); });
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+
+  draw();
+})();
+</script>
+</body>
+</html>

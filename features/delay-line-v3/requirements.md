@@ -44,15 +44,22 @@ Record math (single writer per channel → a trivial read-modify-write, no
 multi-writer barrier):
 
 ```
-tape[slot] = Regen · old  +  Send · input
+tape[slot] = (1 − Send) · Regen · old  +  Send · input
 ```
+
+Because the Tap reads the very slot the Write overwrites, `old` is the *same*
+delayed frame the Tap already fed back through Wet. Gating Regen by `(1 − Send)`
+stops the two feedback paths double-counting: the **single loop-feedback
+coefficient is `(1−Send)·Regen + Send·Wet`** — at Send = 1 it is **Wet alone**,
+and as Send → 0 it becomes Regen (the ring-out). Feedback ≥ 1 sustains/blooms;
+< 1 fades. `Dry` is *injection only* (`Send·Dry`) — it never sets the tail.
 
 | Control | Role |
 |---|---|
 | **Channel** | The patch point. Tap + Write on the same Channel form a loop. |
 | **Time** | Tape length / delay. Beat-sync: Sync Mode ∈ {Subdivision, Ms, Frames} + the value. |
-| **Regen** | Decay rate of the loop-old content at the write slot → the ring-out tail. Fourth-root curve. 0 = clean lap; →1 = infinite hold. |
-| **Send** | Dub throw — how hard the current frame commits into the loop. Linear (automates cleanly). **Pulse this** (with Tap Wet high) to pulse video echoes. |
+| **Regen** | Ring-out rate: how much of the slot survives when you STOP sending (Send→0). Fourth-root curve. Inactive at Send = 1. |
+| **Send** | Dub throw — how hard the current frame commits. At 1 the loop feedback is Wet; pulse it down (Tap Wet high) and echoes ring out at the Regen rate. |
 
 ### Delay Tap (`DlyT`) — the read head
 Sits first in the stack. Reads the tape at a **fixed full delay** (one lap back —
@@ -65,8 +72,8 @@ out = clamp(Dry · source  +  Wet · tape[full-delay])
 | Control | Role |
 |---|---|
 | **Channel** | Source tape (the patch point). |
-| **Dry** | Gain on the live source into the FX chain. This is the source's path into the loop. Dry=0 → pure recirculating feedback. |
-| **Wet** | Gain on the delayed tape → feedback that the downstream FX re-process each lap. Hold high, pulse Write Send, for dub echoes. |
+| **Dry** | Gain on the live source into the FX chain — the source's *injection* path. Does NOT set the tail; Dry=0 → no new material, loop rings out per the feedback. |
+| **Wet** | Gain on the delayed tape → the loop's **feedback** (at full Send). Wet=1 = infinite echo, Wet<1 = decays. The downstream FX re-process it each lap. Hold high, pulse Write Send, for dub echoes. |
 
 Two independent gains, **not** a crossfade — Dry and Wet are decoupled, so you can
 hold a long tail *and* pulse new material in.
@@ -107,11 +114,13 @@ itself removes that dependency and the seeding chicken-and-egg with it.
 
 ## The dub gesture
 
-Hold **Wet** up (the loop feeds the FX), set **Regen** for the ring-out tail, and
-**pulse Send** to throw new video into a ringing loop. Drop Send to 0 and the
-echoes ring out at the Regen rate instead of cutting to black — which is why both
-Wet (feedback that morphs through the FX) and Regen (raw persistence that just
-fades) earn their places.
+**Wet** sets the tail (the loop's feedback), and the FX re-process that feedback
+each lap. **Pulse Send** to throw new video into the ringing loop; drop Send to 0
+and the echoes ring out at the **Regen** rate instead of cutting to black. So the
+two knobs have non-overlapping jobs: Wet = how much it feeds back while you're
+sending, Regen = how it decays once you stop. `Dry` only injects fresh source and
+never touches the tail — muting Dry does not stop a loop whose feedback (Wet) is
+at unity, which is expected: Wet = 100% is an infinite echo by definition.
 
 ## Non-goals / fast-follow (bolt onto working atoms, not atoms)
 

@@ -11,8 +11,15 @@
 //! stack; because it samples its own input, the source survives at 100% effect
 //! opacity (the host does no mixing) — Dry is the source's path into the FX. Read
 //! -only: it never touches the tape.
+//!
+//! **Blend Space** selects the colour space of that sum: Perceptual (default,
+//! exact legacy) blends the sRGB-encoded values directly; Linear decodes to
+//! ~linear light, blends + clamps as real light, then re-encodes (cleaner colour
+//! mixing + additive bloom). All of this lives in the shared `output.frag.glsl`.
 
 mod params;
+
+use std::time::UNIX_EPOCH;
 
 use gl::types::*;
 
@@ -21,6 +28,16 @@ use ffgl_core::{FFGLData, GLInput};
 
 use params::{TapParams, NUM_PARAMS};
 use pluglib::{api, OutputProgram, QuadGeometry};
+
+/// Host-provided per-frame id for the shared barrier: host_time as whole ms.
+/// Matches `delay-write`'s `frame_id` so both plugins agree on frame identity
+/// and the channel's `frame_index` advances exactly once per host frame.
+fn frame_id(data: &FFGLData) -> u64 {
+    data.host_time
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 pub struct DelayTap {
     params: TapParams,
@@ -33,6 +50,7 @@ pub struct DelayTap {
 impl DelayTap {
     fn draw_tap(
         &mut self,
+        frame_id: u64,
         input_tex: GLuint,
         uv_scale: [f32; 2],
         host_fbo: GLint,
@@ -40,17 +58,22 @@ impl DelayTap {
     ) {
         let api = api();
         let ch = self.params.channel();
+        // Tick the shared barrier (zero dims: read-only, never sizes the buffer)
+        // so frame_index advances once per host frame even on a Tap-only frame.
+        (api.frame_tick)(ch, 0, 0, 0, frame_id);
         let tex = (api.tex)(ch);
-        let wp = (api.write_pos)(ch);
         let buf_size = (api.buf_size)(ch);
+        let frame_index = (api.frame_index)(ch);
 
-        // Fixed full-delay read: the oldest slot (wp+1) — the frame the Write is
-        // about to overwrite this frame, i.e. one full lap back. No buffer yet →
-        // wet forced to 0 so only Dry*source passes.
+        // Fixed full-delay read: the oldest slot, one full lap (loop_length
+        // frames) back. Derived absolutely from frame_index (spec v0.2) via
+        // delay-dsp, so it's independent of draw order and reconciled with the
+        // Write's slot + the unit tests. No buffer yet → wet forced to 0 so only
+        // Dry*source passes (TAP-EMPTY-BUFFER).
         let (read_pos, wet) = if buf_size == 0 || tex == 0 {
             (0u32, 0.0)
         } else {
-            ((wp + 1) % buf_size, self.params.wet())
+            (delay_dsp::Ring::for_buffer(buf_size).read_slot(frame_index), self.params.wet())
         };
 
         let quad = self.quad.as_ref().unwrap();
@@ -59,7 +82,7 @@ impl DelayTap {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
             gl::Viewport(host_viewport[0], host_viewport[1], host_viewport[2], host_viewport[3]);
         }
-        output.draw(quad, input_tex, uv_scale, tex, read_pos as f32, self.params.dry(), wet);
+        output.draw(quad, input_tex, uv_scale, tex, read_pos as f32, self.params.dry(), wet, self.params.gamma());
     }
 }
 
@@ -106,26 +129,39 @@ impl SimpleFFGLInstance for DelayTap {
         };
         let uv_scale = [width as f32 / hw_width as f32, height as f32 / hw_height as f32];
 
+        // Save host GL state. The Tap's output pass binds textures on units 0/1
+        // and leaves unit 0 cleared, so the restore is widened to put the host's
+        // active unit and unit-0 binding back (spec v0.2 open-question #2; project
+        // note: never leave the host's unit-0 texture unbound). The Tap touches no
+        // blend state.
         let mut host_fbo: GLint = 0;
         let mut host_viewport: [GLint; 4] = [0; 4];
         let scissor_was_on;
         let blend_was_on;
         let depth_was_on;
+        let mut prev_active_tex: GLint = gl::TEXTURE0 as GLint;
+        let mut prev_tex0: GLint = 0;
         unsafe {
             gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut host_fbo);
             gl::GetIntegerv(gl::VIEWPORT, host_viewport.as_mut_ptr());
             scissor_was_on = gl::IsEnabled(gl::SCISSOR_TEST) == gl::TRUE;
             blend_was_on = gl::IsEnabled(gl::BLEND) == gl::TRUE;
             depth_was_on = gl::IsEnabled(gl::DEPTH_TEST) == gl::TRUE;
+            gl::GetIntegerv(gl::ACTIVE_TEXTURE, &mut prev_active_tex);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::GetIntegerv(gl::TEXTURE_BINDING_2D, &mut prev_tex0);
             gl::Disable(gl::SCISSOR_TEST);
             gl::Disable(gl::BLEND);
             gl::Disable(gl::DEPTH_TEST);
         }
 
-        self.draw_tap(input_tex, uv_scale, host_fbo, host_viewport);
+        self.draw_tap(frame_id(data), input_tex, uv_scale, host_fbo, host_viewport);
 
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, host_fbo as GLuint);
+            gl::ActiveTexture(gl::TEXTURE0);
+            gl::BindTexture(gl::TEXTURE_2D, prev_tex0 as GLuint);
+            gl::ActiveTexture(prev_active_tex as GLenum);
             if scissor_was_on { gl::Enable(gl::SCISSOR_TEST); }
             if blend_was_on { gl::Enable(gl::BLEND); }
             if depth_was_on { gl::Enable(gl::DEPTH_TEST); }
@@ -138,6 +174,7 @@ impl SimpleFFGLInstance for DelayTap {
                 channel = self.params.channel() + 1,
                 dry = format!("{:.2}", self.params.dry()),
                 wet = format!("{:.2}", self.params.wet()),
+                blend = if self.params.gamma() == 1.0 { "perceptual" } else { "linear" },
                 bpm = format!("{:.1}", data.host_beat.bpm),
                 "delay-tap status"
             );
