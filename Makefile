@@ -45,11 +45,13 @@ release: build deploy
 _deploy_one:
 	$(eval PDLL := $(shell python3 -c "import json; p=[p for p in json.load(open('$(REGISTRY)'))['plugins'] if p['name']=='$(NAME)'][0]; print(p['dll'])"))
 	@mkdir -p "$(RESOLUME_DIR)"
-	@if [ -f "$(TARGET_DIR)/$(PDLL)" ]; then \
-		cp "$(TARGET_DIR)/$(PDLL)" "$(RESOLUME_DIR)/$(PDLL)"; \
+	@if [ ! -f "$(TARGET_DIR)/$(PDLL)" ]; then \
+		echo "==> ERROR: $(TARGET_DIR)/$(PDLL) not found. Run 'make build PLUGIN=$(NAME)' first." >&2; \
+		exit 1; \
+	elif cp "$(TARGET_DIR)/$(PDLL)" "$(RESOLUME_DIR)/$(PDLL)"; then \
 		echo "==> Deployed $(PDLL) to $(RESOLUME_DIR)/"; \
 	else \
-		echo "==> ERROR: $(TARGET_DIR)/$(PDLL) not found. Run 'make build PLUGIN=$(NAME)' first." >&2; \
+		echo "==> ERROR: could not copy $(PDLL) — is Resolume holding the DLL? Close it and re-run." >&2; \
 		exit 1; \
 	fi
 
