@@ -136,6 +136,7 @@ pub struct TransformShader {
     loc_translate_x: GLint,
     loc_translate_y: GLint,
     loc_uv_scale: GLint,
+    loc_texel: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -153,6 +154,7 @@ impl TransformShader {
         let loc_translate_x = program.uniform_loc("u_translate_x");
         let loc_translate_y = program.uniform_loc("u_translate_y");
         let loc_uv_scale = program.uniform_loc("u_uv_scale");
+        let loc_texel = program.uniform_loc("u_texel");
 
         Self {
             program,
@@ -164,6 +166,7 @@ impl TransformShader {
             loc_translate_x,
             loc_translate_y,
             loc_uv_scale,
+            loc_texel,
             quad,
         }
     }
@@ -178,6 +181,7 @@ impl TransformShader {
         translate_x: f32,
         translate_y: f32,
         uv_scale: [f32; 2],
+        texel: [f32; 2],
     ) {
         self.program.use_program();
         unsafe {
@@ -191,6 +195,7 @@ impl TransformShader {
             gl::Uniform1f(self.loc_translate_x, translate_x);
             gl::Uniform1f(self.loc_translate_y, translate_y);
             gl::Uniform2f(self.loc_uv_scale, uv_scale[0], uv_scale[1]);
+            gl::Uniform2f(self.loc_texel, texel[0], texel[1]);
         }
         self.quad.draw();
         unsafe {

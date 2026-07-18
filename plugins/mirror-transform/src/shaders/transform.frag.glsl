@@ -10,6 +10,7 @@ uniform float u_mirror;
 uniform float u_translate_x;
 uniform float u_translate_y;
 uniform vec2 u_uv_scale;
+uniform vec2 u_texel;   // 1/hardware_size, per axis
 
 void main() {
     // Scale, swirl, rotate around center
@@ -37,13 +38,30 @@ void main() {
     // Mirror or soft-clip at edges
     float inBounds = 1.0;
     if (u_mirror > 0.5) {
-        // Kaleidoscope: fold UV back into 0..1 range
-        transformed_uv = 1.0 - abs(mod(transformed_uv, 2.0) - 1.0);
+        // Kaleidoscope fold, done in TEXCOORD space and reflected about the
+        // outer texel *centers* (half a texel inside each content edge) rather
+        // than the content edge itself. Folding about the literal edge put the
+        // mirror axis on the content->padding boundary, so bilinear sampling
+        // there blended the last real column with padding (a dark seam), and it
+        // also doubled the edge column. Reflecting between the two outer centers
+        // keeps every sample >= half a texel inside the content region: no
+        // padding bleed, no doubled column. Bypasses the shared sample below.
+        vec2 half_t = 0.5 * u_texel;
+        vec2 span   = u_uv_scale - u_texel;               // outer-center to outer-center
+        vec2 y      = mod(transformed_uv * u_uv_scale - half_t, 2.0 * span);
+        vec2 folded = half_t + (span - abs(y - span));    // apex on real texel centers
+        out_color = texture(u_input, folded);
+        return;
     } else {
-        // Soft clip: fade to black at edges
+        // Soft clip: fade to black only OUTSIDE the frame. The fade band lives
+        // in [-edge, 0], so any transformed_uv inside [0,1] — including the
+        // outermost pixel rows/cols (whose centers sit at 0.5/res, never at a
+        // literal 0 or 1) — stays at full brightness. The old form faded within
+        // [0,edge]/[1-edge,1], darkening the edge rows; in a feedback loop that
+        // compounded into black bars.
         float edge = 0.005;
-        inBounds = smoothstep(0.0, edge, transformed_uv.x) * smoothstep(1.0, 1.0 - edge, transformed_uv.x)
-                 * smoothstep(0.0, edge, transformed_uv.y) * smoothstep(1.0, 1.0 - edge, transformed_uv.y);
+        vec2 d = min(transformed_uv, 1.0 - transformed_uv); // >=0 inside, <0 outside
+        inBounds = smoothstep(-edge, 0.0, d.x) * smoothstep(-edge, 0.0, d.y);
     }
 
     // Scale UVs to account for hardware texture padding
