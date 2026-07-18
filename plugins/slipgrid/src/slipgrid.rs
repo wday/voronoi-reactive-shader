@@ -29,13 +29,17 @@ impl SimpleFFGLInstance for Slipgrid {
             self.shader = Some(SlipgridShader::new());
         }
 
-        let (input_tex, uv_scale) = if !frame_data.textures.is_empty() {
+        let (input_tex, uv_scale, texel) = if !frame_data.textures.is_empty() {
             let t = &frame_data.textures[0];
             let uv_scale = [
                 t.Width as f32 / t.HardwareWidth as f32,
                 t.Height as f32 / t.HardwareHeight as f32,
             ];
-            (t.Handle as GLuint, uv_scale)
+            let texel = [
+                1.0 / t.HardwareWidth as f32,
+                1.0 / t.HardwareHeight as f32,
+            ];
+            (t.Handle as GLuint, uv_scale, texel)
         } else {
             unsafe {
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
@@ -67,6 +71,7 @@ impl SimpleFFGLInstance for Slipgrid {
             seed: self.params.seed(),
             dry_wet: self.params.dry_wet(),
             uv_scale,
+            texel,
         };
         self.shader.as_ref().unwrap().render(input_tex, &uniforms);
 

@@ -19,6 +19,7 @@ out vec4 out_color;
 
 uniform sampler2D u_input;
 uniform vec2 u_uv_scale;      // Width/HardwareWidth — NPOT input region
+uniform vec2 u_texel;         // 1/hardware_size, per axis
 
 uniform vec2  u_grid;         // (nx, ny) tiles
 uniform float u_intensity;    // 0..1 — how much of the grid participates
@@ -45,8 +46,18 @@ vec2 hash2(vec2 p) {
     return fract((p3.xx + p3.yz) * p3.zy);
 }
 
+// Sample content, clamped to stay half a texel inside the outer content texel
+// centres. At the frame's far edge (uv->1) the naive uv*u_uv_scale reaches the
+// content->padding boundary, where bilinear blends the last real row/col with the
+// black hardware padding — a 1px dark seam at the top/bottom edge. Clamping keeps
+// every sample on real content. (Same fix as mirror-transform's edges.)
+vec4 sampleContent(vec2 uv) {
+    vec2 s = clamp(uv * u_uv_scale, 0.5 * u_texel, u_uv_scale - 0.5 * u_texel);
+    return texture(u_input, s);
+}
+
 float luma_at(vec2 uv) {
-    return dot(texture(u_input, uv * u_uv_scale).rgb, vec3(0.299, 0.587, 0.114));
+    return dot(sampleContent(uv).rgb, vec3(0.299, 0.587, 0.114));
 }
 
 float tile_luma(vec2 ti) {
@@ -148,7 +159,7 @@ vec2 smear_hop(vec2 ti, float salt) {
 }
 
 void main() {
-    vec4 original = texture(u_input, v_uv * u_uv_scale);
+    vec4 original = sampleContent(v_uv);
 
     vec2 tf    = v_uv * u_grid;
     vec2 ti    = floor(tf);   // home tile
@@ -171,7 +182,7 @@ void main() {
     }
 
     vec2 src = (ti + local) / u_grid;
-    vec4 slipped = texture(u_input, src * u_uv_scale);
+    vec4 slipped = sampleContent(src);
 
     out_color = mix(original, slipped, u_dry_wet);
 }
