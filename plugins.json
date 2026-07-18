@@ -93,10 +93,17 @@
     },
     {
       "name": "flow_euler",
-      "display_name": "Flow Euler",
+      "display_name": "Euler Soup",
       "type": "isf",
       "shader": "shaders/flow_euler.fs",
       "dll": "flow_euler.dll"
+    },
+    {
+      "name": "flow_undertow",
+      "display_name": "Undertow",
+      "type": "isf",
+      "shader": "shaders/flow_undertow.fs",
+      "dll": "flow_undertow.dll"
     },
     {
       "name": "wavefolder",
