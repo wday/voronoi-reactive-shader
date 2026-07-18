@@ -23,8 +23,16 @@ uniform float u_dry;
 uniform float u_wet;
 uniform float u_gamma;            // blend space (1.0 = perceptual)
 
+// Clamp the sampled content half a texel inside the outer content texel centres,
+// so bilinear never blends the last real row/col with the black NPOT padding
+// (a 1px dark edge seam). texel from textureSize — no host-side uniform needed.
+vec4 sampleContent(vec2 uv) {
+    vec2 texel = 1.0 / vec2(textureSize(u_input, 0));
+    return texture(u_input, clamp(uv * u_uv_scale, 0.5 * texel, u_uv_scale - 0.5 * texel));
+}
+
 void main() {
-    vec4 live = texture(u_input, v_uv * u_uv_scale);
+    vec4 live = sampleContent(v_uv);
     vec4 b0 = texture(u_buffer, vec3(v_uv, u_layer0));
     vec4 b1 = texture(u_buffer, vec3(v_uv, u_layer1));
     vec4 loopc = mix(b0, b1, u_frac);
