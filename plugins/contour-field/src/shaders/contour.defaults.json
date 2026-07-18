@@ -1,0 +1,11 @@
+{
+  "u_scale": 0.45,
+  "u_warp": 0.55,
+  "u_contours": 0.35,
+  "u_line_weight": 0.45,
+  "u_elevation": 0.5,
+  "u_jitter": 0.35,
+  "u_breakup": 0.2,
+  "u_warmth": 0.6,
+  "u_time": 0.0
+}

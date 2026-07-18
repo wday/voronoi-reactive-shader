@@ -78,6 +78,13 @@
       "dll": "slipgrid.dll"
     },
     {
+      "name": "contour_field",
+      "display_name": "Contour Field",
+      "type": "rust",
+      "crate": "contour-field",
+      "dll": "contour_field.dll"
+    },
+    {
       "name": "stereo_depth",
       "display_name": "Stereo Depth",
       "type": "isf",

@@ -136,6 +136,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "contour-field"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -21,6 +21,7 @@ members = [
     "channel-displace",
     "slew-limiter",
     "slipgrid",
+    "contour-field",
 ]
 
 [workspace.dependencies]
