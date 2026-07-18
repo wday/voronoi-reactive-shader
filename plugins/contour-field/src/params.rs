@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 9;
+pub const NUM_PARAMS: usize = 12;
 pub const PARAM_SCALE: usize = 0;
 pub const PARAM_WARP: usize = 1;
 pub const PARAM_CONTOURS: usize = 2;
@@ -12,10 +12,12 @@ pub const PARAM_ELEVATION: usize = 4;
 pub const PARAM_JITTER: usize = 5;
 pub const PARAM_BREAKUP: usize = 6;
 pub const PARAM_WARMTH: usize = 7;
-pub const PARAM_DRIFT: usize = 8;
+pub const PARAM_INVERT: usize = 8;
+pub const PARAM_CONTRAST: usize = 9;
+pub const PARAM_DRIFT_X: usize = 10;
+pub const PARAM_DRIFT_Y: usize = 11;
 
-// Defaults mirror plugins/contour-field/src/shaders/contour.defaults.json so the
-// Resolume plugin and the harness agree on the shipped look.
+// Mirror plugins/contour-field/src/shaders/contour.defaults.json.
 const DEFAULTS: [f32; NUM_PARAMS] = [
     0.45, // scale
     0.55, // warp
@@ -25,7 +27,10 @@ const DEFAULTS: [f32; NUM_PARAMS] = [
     0.35, // jitter
     0.20, // breakup
     0.60, // warmth
-    0.15, // drift (slow geological drift; 0 = frozen)
+    0.00, // invert (0 dark-on-light)
+    0.55, // contrast (slightly punchy)
+    0.12, // drift x (cyclic rate; 0 = still)
+    0.17, // drift y
 ];
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
@@ -44,7 +49,10 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
         std("Jitter", DEFAULTS[PARAM_JITTER]),
         std("Break Up", DEFAULTS[PARAM_BREAKUP]),
         std("Warmth", DEFAULTS[PARAM_WARMTH]),
-        std("Drift", DEFAULTS[PARAM_DRIFT]),
+        std("Invert", DEFAULTS[PARAM_INVERT]),
+        std("Contrast", DEFAULTS[PARAM_CONTRAST]),
+        std("Drift X", DEFAULTS[PARAM_DRIFT_X]),
+        std("Drift Y", DEFAULTS[PARAM_DRIFT_Y]),
     ]
 });
 
@@ -71,8 +79,7 @@ impl ContourParams {
         }
     }
 
-    // Aesthetic params pass straight through 0..1 — the shader maps them to real
-    // ranges via mix(), so host and harness share one mapping.
+    // Aesthetic params pass straight through 0..1 — the shader maps them.
     pub fn scale(&self) -> f32 {
         self.values[PARAM_SCALE]
     }
@@ -97,9 +104,16 @@ impl ContourParams {
     pub fn warmth(&self) -> f32 {
         self.values[PARAM_WARMTH]
     }
-
-    /// Drift 0..1 → phase advance per second. 0 freezes the terrain.
-    pub fn drift(&self) -> f32 {
-        self.values[PARAM_DRIFT]
+    pub fn invert(&self) -> f32 {
+        self.values[PARAM_INVERT]
+    }
+    pub fn contrast(&self) -> f32 {
+        self.values[PARAM_CONTRAST]
+    }
+    pub fn drift_x(&self) -> f32 {
+        self.values[PARAM_DRIFT_X]
+    }
+    pub fn drift_y(&self) -> f32 {
+        self.values[PARAM_DRIFT_Y]
     }
 }

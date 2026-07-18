@@ -6,10 +6,9 @@ use ffgl_core::{FFGLData, GLInput};
 use crate::params::{self, ContourParams, NUM_PARAMS};
 use crate::shader::{ContourShader, ContourUniforms};
 
-/// Drift 1.0 → this many u_time units per second. 0 freezes the terrain.
-const MAX_DRIFT: f32 = 0.5;
-/// Host render rate assumed for the drift accumulator (drift speed is a taste
-/// knob, so exact fps doesn't matter — this only sets the unit).
+/// Free-running clock: u_time advances 1/ASSUMED_FPS per frame (seconds). The
+/// shader's drift_offset() turns it into cyclic per-axis motion, so exact fps
+/// doesn't matter — Drift X/Y are taste knobs.
 const ASSUMED_FPS: f32 = 60.0;
 
 pub struct ContourField {
@@ -56,7 +55,7 @@ impl SimpleFFGLInstance for ContourField {
         };
 
         // Advance the geological drift.
-        self.phase += self.params.drift() * MAX_DRIFT / ASSUMED_FPS;
+        self.phase += 1.0 / ASSUMED_FPS;
 
         // Save host GL state.
         let scissor_was_on;
@@ -81,6 +80,10 @@ impl SimpleFFGLInstance for ContourField {
             jitter: self.params.jitter(),
             breakup: self.params.breakup(),
             warmth: self.params.warmth(),
+            invert: self.params.invert(),
+            contrast: self.params.contrast(),
+            drift_x: self.params.drift_x(),
+            drift_y: self.params.drift_y(),
             time: self.phase,
         };
         self.shader.as_ref().unwrap().render(input_tex, &uniforms);

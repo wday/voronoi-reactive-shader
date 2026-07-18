@@ -31,7 +31,11 @@ uniform float u_elevation;     // scrub the elevation origin (which heights get 
 uniform float u_jitter;        // hand-imperfection: line wobble + weight variation
 uniform float u_breakup;       // incompleteness: erase random line segments (pencil lift)
 uniform float u_warmth;        // palette: cool grey-ink ↔ warm earth-ink on paper
-uniform float u_time;          // animation phase (static in harness, live in Resolume)
+uniform float u_invert;        // 0 dark-on-light, 1 light-on-dark
+uniform float u_contrast;      // tone separation (0 soft, 0.5 neutral, 1 punchy)
+uniform float u_drift_x;       // cyclic drift rate, X axis (0 = still)
+uniform float u_drift_y;       // cyclic drift rate, Y axis (0 = still)
+uniform float u_time;          // free-running clock (static in harness, live in Resolume)
 
 const float TAU = 6.28318530718;
 
@@ -49,7 +53,7 @@ void main() {
     // out of the top-left. (Drift is a separate constant translation.)
     float zoom = mix(1.5, 9.0, u_scale);
     vec2 center = vec2(aspect, 1.0) * 0.5;
-    vec2 p = (uv - center) * zoom + vec2(0.13, 0.47) * u_time;   // slow geological drift
+    vec2 p = (uv - center) * zoom + drift_offset(u_time, u_drift_x, u_drift_y);
 
     // Hand-imperfection: displace the sample point by SMOOTH low-frequency noise
     // so contours meander like a drawn line. (A floored-cell hash here instead
@@ -89,13 +93,7 @@ void main() {
     float seg = hash1(vec2(floor(f), floor(length(p) * 6.0 + h * 20.0)));
     float ink = line * step(u_breakup * 0.9, seg);
 
-    // --- Palette: ink on paper ---
-    vec3 paper = mix(vec3(0.90, 0.89, 0.86), vec3(0.93, 0.88, 0.80), u_warmth);
-    vec3 inkc  = mix(vec3(0.10, 0.11, 0.13), vec3(0.16, 0.10, 0.06), u_warmth);
-    // Faint elevation tint on the paper so bands read as a subtle relief.
-    float tint = 0.06 * (h - 0.5);
-    paper -= tint;
-
-    vec3 col = mix(paper, inkc, clamp(ink, 0.0, 1.0));
-    out_color = vec4(col, 1.0);
+    // Ink on paper — warmth / contrast / invert handled centrally in paint().
+    float tint = 0.06 * (h - 0.5);   // faint elevation relief
+    out_color = vec4(paint(ink, u_warmth, u_contrast, u_invert, tint), 1.0);
 }

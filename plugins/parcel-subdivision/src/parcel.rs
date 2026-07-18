@@ -6,10 +6,9 @@ use ffgl_core::{FFGLData, GLInput};
 use crate::params::{self, ParcelParams, NUM_PARAMS};
 use crate::shader::{ParcelShader, ParcelUniforms};
 
-/// Drift 1.0 → this many u_time units per second. 0 freezes the terrain.
-const MAX_DRIFT: f32 = 0.5;
-/// Assumed host render rate for the drift accumulator (taste knob, so exact fps
-/// doesn't matter — this only sets the unit).
+/// Free-running clock: u_time advances 1/ASSUMED_FPS per frame (seconds). The
+/// shader's drift_offset() turns it into cyclic per-axis motion, so exact fps
+/// doesn't matter — Drift X/Y are taste knobs.
 const ASSUMED_FPS: f32 = 60.0;
 
 pub struct ParcelSubdivision {
@@ -51,7 +50,7 @@ impl SimpleFFGLInstance for ParcelSubdivision {
             0
         };
 
-        self.phase += self.params.drift() * MAX_DRIFT / ASSUMED_FPS;
+        self.phase += 1.0 / ASSUMED_FPS;
 
         let scissor_was_on;
         let blend_was_on;
@@ -75,6 +74,10 @@ impl SimpleFFGLInstance for ParcelSubdivision {
             inset: self.params.inset(),
             jitter: self.params.jitter(),
             warmth: self.params.warmth(),
+            invert: self.params.invert(),
+            contrast: self.params.contrast(),
+            drift_x: self.params.drift_x(),
+            drift_y: self.params.drift_y(),
             time: self.phase,
         };
         self.shader.as_ref().unwrap().render(input_tex, &uniforms);

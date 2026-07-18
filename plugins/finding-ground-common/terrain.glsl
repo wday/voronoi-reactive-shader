@@ -46,3 +46,37 @@ float height(vec2 p) {
     float w = mix(0.0, 1.4, u_warp);
     return fbm(p + w * q);
 }
+
+// --- shared motion + paint (used by all three generators) ---
+
+// Cyclic per-axis drift. dx/dy (0..1) set the oscillation RATE on each axis;
+// the sample point traces a bounded Lissajous path, so the terrain keeps moving
+// through fresh directions and never goes stale the way a single linear drift
+// did. 0 on an axis freezes it. The Y phase is offset so equal rates don't make
+// a pure diagonal.
+vec2 drift_offset(float t, float dx, float dy) {
+    const float AMP  = 2.5;   // world-space travel
+    const float MAXW = 2.0;   // max angular rate (rad/sec)
+    return AMP * vec2(sin(t * mix(0.0, MAXW, dx)),
+                      sin(t * mix(0.0, MAXW, dy) + 1.7));
+}
+
+// Ink-on-paper compositing. coverage 0..1 = how much ink at this pixel.
+//   warmth   — cool grey-ink ↔ warm earth-ink on paper
+//   contrast — 0 soft/muddy, 0.5 neutral, 1 deep blacks + bright paper
+//   invert   — 0 dark ink on light paper, 1 light lines on dark ground
+//   tint     — faint signed relief added to the ground (e.g. elevation)
+vec3 paint(float coverage, float warmth, float contrast, float invert, float tint) {
+    vec3 paper = mix(vec3(0.90, 0.89, 0.86), vec3(0.93, 0.88, 0.80), warmth);
+    vec3 inkc  = mix(vec3(0.10, 0.11, 0.13), vec3(0.16, 0.10, 0.06), warmth);
+
+    // Push the two tones apart (or together) about their midpoint.
+    float c = mix(0.6, 1.7, contrast);
+    vec3 mid = (paper + inkc) * 0.5;
+    paper = clamp(mix(mid, paper, c) - tint, 0.0, 1.0);
+    inkc  = clamp(mix(mid, inkc, c), 0.0, 1.0);
+
+    vec3 bg = mix(paper, inkc, invert);
+    vec3 fg = mix(inkc, paper, invert);
+    return mix(bg, fg, clamp(coverage, 0.0, 1.0));
+}

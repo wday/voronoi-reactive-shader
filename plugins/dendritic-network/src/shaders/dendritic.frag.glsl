@@ -29,7 +29,11 @@ uniform float u_hierarchy;     // how much lower elevation fattens the main chan
 uniform float u_jitter;        // hand-imperfection: meander
 uniform float u_breakup;       // incompleteness: lift the pen on segments
 uniform float u_warmth;        // palette: cool ink ↔ warm earth-ink
-uniform float u_time;          // drift (static in harness, live in Resolume)
+uniform float u_invert;        // 0 dark-on-light, 1 light-on-dark
+uniform float u_contrast;      // tone separation (0 soft, 0.5 neutral, 1 punchy)
+uniform float u_drift_x;       // cyclic drift rate, X axis (0 = still)
+uniform float u_drift_y;       // cyclic drift rate, Y axis (0 = still)
+uniform float u_time;          // free-running clock (static in harness, live in Resolume)
 
 const float TAU = 6.28318530718;
 
@@ -77,7 +81,7 @@ void main() {
     // Same terrain + centre-anchored zoom as P1, so rivers register with contours.
     float zoom = mix(1.5, 9.0, u_scale);
     vec2 center = vec2(aspect, 1.0) * 0.5;
-    vec2 p = (uv - center) * zoom + vec2(0.13, 0.47) * u_time;
+    vec2 p = (uv - center) * zoom + drift_offset(u_time, u_drift_x, u_drift_y);
 
     // Hand meander: smooth low-freq displacement of the sample point.
     vec2 jit = (vec2(vnoise(p * 2.5 + 11.3), vnoise(p * 2.5 + 37.1)) - 0.5) * (u_jitter * 0.15);
@@ -100,8 +104,5 @@ void main() {
     float seg = hash1(floor(pp * 8.0) + floor(h * 20.0));
     ink *= step(u_breakup * 0.9, seg);
 
-    vec3 paper = mix(vec3(0.90, 0.89, 0.86), vec3(0.93, 0.88, 0.80), u_warmth);
-    vec3 inkc  = mix(vec3(0.10, 0.11, 0.13), vec3(0.16, 0.10, 0.06), u_warmth);
-    vec3 col   = mix(paper, inkc, ink);
-    out_color = vec4(col, 1.0);
+    out_color = vec4(paint(ink, u_warmth, u_contrast, u_invert, 0.0), 1.0);
 }

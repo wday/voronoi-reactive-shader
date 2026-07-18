@@ -171,3 +171,27 @@ Warp, **Depth**, **Regularity** (regular half-splits ↔ irregular), **Border**,
 **Milestone M2 reached** (P1+P2+P3 live, overlaying coherently via one terrain).
 Uncommitted parts: the factor + P3. **Next:** user live-checks P3; then Stage 4 —
 compose the `.avc` (generators + flow/voronoi/delay/mirror/wavefolder hybrid chains).
+
+**P3 confirmed + committed** (`refactor: … terrain.glsl` + `feat: … P3 (PrcL)`).
+
+## 2026-07-18 — Live feedback #2: cyclic X/Y drift + invert/contrast palette (all 3)
+
+User: the single one-direction drift goes stale; want X and Y drift controllable +
+**cyclic**; and make the palette **invertable** (it's predominantly white) and
+**contrastier**. Applied to ALL THREE generators via shared helpers in `terrain.glsl`
+(so it's one implementation, not three):
+- **`drift_offset(t, dx, dy)`** — replaces the linear `vec2(0.13,0.47)*u_time`. A bounded
+  **Lissajous**: dx/dy set per-axis oscillation RATE (0 = still), Y phase-offset so equal
+  rates aren't a pure diagonal. Cyclic, ever-changing direction → doesn't go stale. The
+  plugin now advances `u_time` as a **free-running clock** (1/60 s per frame) instead of a
+  drift-scaled accumulator; Drift X/Y are shader uniforms.
+- **`paint(coverage, warmth, contrast, invert, tint)`** — centralizes ink-on-paper. `invert`
+  swaps fg/bg (light-lines-on-dark → fixes the white dominance); `contrast` pushes the two
+  tones apart about their midpoint (0 soft ↔ 1 deep blacks + bright paper). Verified headless:
+  inverted+punchy contour = white contours on near-black; inverted parcel = white survey grid
+  on black.
+- **Params: 9 → 12 each** — dropped **Drift**, added **Invert, Contrast, Drift X, Drift Y**.
+  (These plugins aren't in saved comps yet, so the index reshuffle is safe.) Defaults:
+  invert 0, contrast 0.55, drift x/y 0.12/0.17 (gentle cyclic).
+
+All three rebuilt (MSVC) + deployed. Uncommitted → committing now.

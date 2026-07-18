@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 9;
+pub const NUM_PARAMS: usize = 12;
 pub const PARAM_SCALE: usize = 0;
 pub const PARAM_WARP: usize = 1;
 pub const PARAM_DENSITY: usize = 2;
@@ -12,19 +12,25 @@ pub const PARAM_HIERARCHY: usize = 4;
 pub const PARAM_JITTER: usize = 5;
 pub const PARAM_BREAKUP: usize = 6;
 pub const PARAM_WARMTH: usize = 7;
-pub const PARAM_DRIFT: usize = 8;
+pub const PARAM_INVERT: usize = 8;
+pub const PARAM_CONTRAST: usize = 9;
+pub const PARAM_DRIFT_X: usize = 10;
+pub const PARAM_DRIFT_Y: usize = 11;
 
 // Mirror plugins/dendritic-network/src/shaders/dendritic.defaults.json.
 const DEFAULTS: [f32; NUM_PARAMS] = [
-    0.40, // scale (shares P1's terrain zoom)
+    0.40, // scale
     0.55, // warp
-    0.45, // density (channel threshold: high → main rivers only)
+    0.45, // density
     0.50, // thickness
-    0.75, // hierarchy (lowland gating / downstream emphasis)
+    0.75, // hierarchy
     0.25, // jitter
     0.00, // breakup
     0.60, // warmth
-    0.15, // drift (0 = frozen)
+    0.00, // invert
+    0.55, // contrast
+    0.12, // drift x
+    0.17, // drift y
 ];
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
@@ -43,7 +49,10 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
         std("Jitter", DEFAULTS[PARAM_JITTER]),
         std("Break Up", DEFAULTS[PARAM_BREAKUP]),
         std("Warmth", DEFAULTS[PARAM_WARMTH]),
-        std("Drift", DEFAULTS[PARAM_DRIFT]),
+        std("Invert", DEFAULTS[PARAM_INVERT]),
+        std("Contrast", DEFAULTS[PARAM_CONTRAST]),
+        std("Drift X", DEFAULTS[PARAM_DRIFT_X]),
+        std("Drift Y", DEFAULTS[PARAM_DRIFT_Y]),
     ]
 });
 
@@ -70,7 +79,6 @@ impl DendriticParams {
         }
     }
 
-    // Aesthetic params pass straight through 0..1 — the shader maps them.
     pub fn scale(&self) -> f32 {
         self.values[PARAM_SCALE]
     }
@@ -95,9 +103,16 @@ impl DendriticParams {
     pub fn warmth(&self) -> f32 {
         self.values[PARAM_WARMTH]
     }
-
-    /// Drift 0..1 → phase advance per second. 0 freezes the terrain.
-    pub fn drift(&self) -> f32 {
-        self.values[PARAM_DRIFT]
+    pub fn invert(&self) -> f32 {
+        self.values[PARAM_INVERT]
+    }
+    pub fn contrast(&self) -> f32 {
+        self.values[PARAM_CONTRAST]
+    }
+    pub fn drift_x(&self) -> f32 {
+        self.values[PARAM_DRIFT_X]
+    }
+    pub fn drift_y(&self) -> f32 {
+        self.values[PARAM_DRIFT_Y]
     }
 }

@@ -25,7 +25,11 @@ uniform float u_border;        // parcel line weight
 uniform float u_inset;         // gap between parcels
 uniform float u_jitter;        // hand-imperfection: border wobble
 uniform float u_warmth;        // palette
-uniform float u_time;          // drift
+uniform float u_invert;        // 0 dark-on-light, 1 light-on-dark
+uniform float u_contrast;      // tone separation (0 soft, 0.5 neutral, 1 punchy)
+uniform float u_drift_x;       // cyclic drift rate, X axis (0 = still)
+uniform float u_drift_y;       // cyclic drift rate, Y axis (0 = still)
+uniform float u_time;          // free-running clock
 
 const int MAXD = 8;
 
@@ -39,7 +43,7 @@ void main() {
     // Same centre-anchored, zoomed terrain space as P1/P2.
     float zoom = mix(1.5, 9.0, u_scale);
     vec2 center = vec2(aspect, 1.0) * 0.5;
-    vec2 p = (uv - center) * zoom + vec2(0.13, 0.47) * u_time;
+    vec2 p = (uv - center) * zoom + drift_offset(u_time, u_drift_x, u_drift_y);
 
     // Survey townships = integer cells of world space; f is position within one.
     vec2 cellId = floor(p);
@@ -91,10 +95,7 @@ void main() {
 
     float ink = clamp(max(parcel, grat), 0.0, 1.0);
 
-    // Palette: ink on paper, faint elevation tint so parcels sit on the land.
-    vec3 paper = mix(vec3(0.90, 0.89, 0.86), vec3(0.93, 0.88, 0.80), u_warmth);
-    vec3 inkc  = mix(vec3(0.10, 0.11, 0.13), vec3(0.16, 0.10, 0.06), u_warmth);
-    paper -= 0.05 * (hc - 0.5);
-    vec3 col = mix(paper, inkc, ink);
-    out_color = vec4(col, 1.0);
+    // Ink on paper — warmth / contrast / invert handled centrally in paint().
+    float tint = 0.05 * (hc - 0.5);   // faint elevation relief
+    out_color = vec4(paint(ink, u_warmth, u_contrast, u_invert, tint), 1.0);
 }

@@ -148,6 +148,10 @@ pub struct ContourUniforms {
     pub jitter: f32,
     pub breakup: f32,
     pub warmth: f32,
+    pub invert: f32,
+    pub contrast: f32,
+    pub drift_x: f32,
+    pub drift_y: f32,
     pub time: f32,
 }
 
@@ -163,6 +167,10 @@ pub struct ContourShader {
     loc_jitter: GLint,
     loc_breakup: GLint,
     loc_warmth: GLint,
+    loc_invert: GLint,
+    loc_contrast: GLint,
+    loc_drift_x: GLint,
+    loc_drift_y: GLint,
     loc_time: GLint,
     pub quad: QuadGeometry,
 }
@@ -184,6 +192,10 @@ impl ContourShader {
         let loc_jitter = program.uniform_loc("u_jitter");
         let loc_breakup = program.uniform_loc("u_breakup");
         let loc_warmth = program.uniform_loc("u_warmth");
+        let loc_invert = program.uniform_loc("u_invert");
+        let loc_contrast = program.uniform_loc("u_contrast");
+        let loc_drift_x = program.uniform_loc("u_drift_x");
+        let loc_drift_y = program.uniform_loc("u_drift_y");
         let loc_time = program.uniform_loc("u_time");
 
         Self {
@@ -198,6 +210,10 @@ impl ContourShader {
             loc_jitter,
             loc_breakup,
             loc_warmth,
+            loc_invert,
+            loc_contrast,
+            loc_drift_x,
+            loc_drift_y,
             loc_time,
             quad,
         }
@@ -221,6 +237,10 @@ impl ContourShader {
             gl::Uniform1f(self.loc_jitter, u.jitter);
             gl::Uniform1f(self.loc_breakup, u.breakup);
             gl::Uniform1f(self.loc_warmth, u.warmth);
+            gl::Uniform1f(self.loc_invert, u.invert);
+            gl::Uniform1f(self.loc_contrast, u.contrast);
+            gl::Uniform1f(self.loc_drift_x, u.drift_x);
+            gl::Uniform1f(self.loc_drift_y, u.drift_y);
             gl::Uniform1f(self.loc_time, u.time);
         }
         self.quad.draw();

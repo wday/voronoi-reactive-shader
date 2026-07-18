@@ -6,10 +6,9 @@ use ffgl_core::{FFGLData, GLInput};
 use crate::params::{self, DendriticParams, NUM_PARAMS};
 use crate::shader::{DendriticShader, DendriticUniforms};
 
-/// Drift 1.0 → this many u_time units per second. 0 freezes the terrain.
-const MAX_DRIFT: f32 = 0.5;
-/// Assumed host render rate for the drift accumulator (drift is a taste knob, so
-/// exact fps doesn't matter — this only sets the unit).
+/// Free-running clock: u_time advances 1/ASSUMED_FPS per frame (seconds). The
+/// shader's drift_offset() turns it into cyclic per-axis motion, so exact fps
+/// doesn't matter — Drift X/Y are taste knobs.
 const ASSUMED_FPS: f32 = 60.0;
 
 pub struct DendriticNetwork {
@@ -52,7 +51,7 @@ impl SimpleFFGLInstance for DendriticNetwork {
             0
         };
 
-        self.phase += self.params.drift() * MAX_DRIFT / ASSUMED_FPS;
+        self.phase += 1.0 / ASSUMED_FPS;
 
         let scissor_was_on;
         let blend_was_on;
@@ -76,6 +75,10 @@ impl SimpleFFGLInstance for DendriticNetwork {
             jitter: self.params.jitter(),
             breakup: self.params.breakup(),
             warmth: self.params.warmth(),
+            invert: self.params.invert(),
+            contrast: self.params.contrast(),
+            drift_x: self.params.drift_x(),
+            drift_y: self.params.drift_y(),
             time: self.phase,
         };
         self.shader.as_ref().unwrap().render(input_tex, &uniforms);

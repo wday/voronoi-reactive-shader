@@ -7,5 +7,9 @@
   "u_inset": 0.30,
   "u_jitter": 0.20,
   "u_warmth": 0.60,
+  "u_invert": 0.0,
+  "u_contrast": 0.55,
+  "u_drift_x": 0.12,
+  "u_drift_y": 0.17,
   "u_time": 0.0
 }
