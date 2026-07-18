@@ -64,7 +64,14 @@ void main() {
         inBounds = smoothstep(-edge, 0.0, d.x) * smoothstep(-edge, 0.0, d.y);
     }
 
-    // Scale UVs to account for hardware texture padding
-    vec4 color = texture(u_input, transformed_uv * u_uv_scale) * inBounds;
+    // Sample inside the content's outer texel CENTRES (half a texel in from each
+    // edge), the same inset the mirror path uses. Sampling transformed_uv*u_uv_scale
+    // directly reaches the content->padding boundary at transformed_uv→0/1, where
+    // bilinear blends the last real row/col with the black hardware padding — a 1px
+    // dark seam at the edge (visible on translate_y + scale-up). Out-of-frame uv is
+    // clamped here but masked to black by inBounds, so the clamp is invisible.
+    vec2 span = u_uv_scale - u_texel;                       // outer-centre to outer-centre
+    vec2 sample_uv = 0.5 * u_texel + clamp(transformed_uv, 0.0, 1.0) * span;
+    vec4 color = texture(u_input, sample_uv) * inBounds;
     out_color = color;
 }
