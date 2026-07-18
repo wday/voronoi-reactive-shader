@@ -1,0 +1,11 @@
+{
+    "u_uv_scale": [1.0, 1.0],
+    "u_grid": [8.0, 8.0],
+    "u_intensity": 0.5,
+    "u_locality": 2.0,
+    "u_edge_gravity": 0.0,
+    "u_iterations": 3,
+    "u_mode": 0,
+    "u_seed": 0.0,
+    "u_dry_wet": 1.0
+}

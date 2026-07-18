@@ -71,6 +71,13 @@
       "dll": "slew_limiter.dll"
     },
     {
+      "name": "slipgrid",
+      "display_name": "Slipgrid",
+      "type": "rust",
+      "crate": "slipgrid",
+      "dll": "slipgrid.dll"
+    },
+    {
       "name": "stereo_depth",
       "display_name": "Stereo Depth",
       "type": "isf",

@@ -20,6 +20,7 @@ members = [
     "logistic-feedback",
     "channel-displace",
     "slew-limiter",
+    "slipgrid",
 ]
 
 [workspace.dependencies]
