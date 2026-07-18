@@ -151,7 +151,7 @@
             "TYPE": "float",
             "MIN": 0.0,
             "MAX": 1.0,
-            "DEFAULT": 0.0
+            "DEFAULT": 0.6
         }
     ]
 }*/
@@ -207,21 +207,35 @@ float imageCertainty(vec2 seedUV) {
     return dot(col.rgb, vec3(0.299, 0.587, 0.114));
 }
 
+// Regional brightness: small cross-blur so the density field responds to
+// structure, not pixel noise (keeps the grid rescale from shimmering).
+float imageCertaintyBlur(vec2 uv, float r) {
+    float s = imageCertainty(uv);
+    s += imageCertainty(uv + vec2(r, 0.0));
+    s += imageCertainty(uv - vec2(r, 0.0));
+    s += imageCertainty(uv + vec2(0.0, r));
+    s += imageCertainty(uv - vec2(0.0, r));
+    return s / 5.0;
+}
+
 
 // --- Voronoi for a single layer ---
 // Returns vec4(F1, F2, cellID.x, cellID.y)
 
 vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
-    // Sample local image brightness at fragment position
+    // Sample regional image brightness at fragment position (blurred → stable grid)
     vec2 fragNormUV = vec2(uv.x / aspect, uv.y);
-    float localBright = imageCertainty(fragNormUV);
+    float localBright = imageCertaintyBlur(fragNormUV, 0.012);
 
-    // Modulate density: bright areas → tighter cells, dark areas → larger cells
-    // imageInfluence=0 → no modulation; imageInfluence=1 → 4:1 density ratio
-    float densityMult = mix(1.0, 0.5 + 1.5 * localBright, imageInfluence);
+    // Modulate density: dark areas → tighter cells, bright areas → larger cells.
+    // imageInfluence=0 → no modulation; imageInfluence=1 → ~3.6:1 density ratio.
+    float densityMult = mix(1.0, mix(1.8, 0.5, localBright), imageInfluence);
     float modScale = scale * densityMult;
 
-    vec2 p = uv * modScale;
+    // Scale the grid about the frame centre, not the (0,0) corner, so the
+    // pattern expands/contracts symmetrically instead of smearing out of a corner.
+    vec2 center = vec2(aspect, 1.0) * 0.5;
+    vec2 p = (uv - center) * modScale;
     vec2 cell = floor(p);
     vec2 localP = fract(p);
 
@@ -242,11 +256,13 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             vec2 seedHash = hash2(cellPos);
             vec2 seedBase = seedHash * 0.8 + 0.1;
 
-            // Sample image certainty at seed position
-            vec2 seedWorldUV = (cellPos + seedBase) / modScale;
+            // Sample image certainty at seed position (undo the centre offset)
+            vec2 seedWorldUV = (cellPos + seedBase) / modScale + center;
             vec2 seedNormUV = vec2(seedWorldUV.x / aspect, seedWorldUV.y);
             float rawCert = imageCertainty(seedNormUV);
-            float cert = pow(rawCert, certContrast) * imageInfluence;
+            // Normalised brightness in [0,1]; imageInfluence is applied at use-sites,
+            // not baked in here — so raising influence strengthens (never dims) the map.
+            float cert = pow(rawCert, certContrast);
 
             // NC: accumulate certainty with Gaussian applicability
             vec2 point0 = neighbor + seedBase;
@@ -269,7 +285,8 @@ vec4 voronoiLayer(vec2 uv, float scale, float animTime, float aspect) {
             vec2 chaoticDrift = mix(rA, rB, blend) * 0.7;
 
             // Certainty modulates drift: high cert → anchored, low cert → free drift
-            float driftScale = 1.0 - cert * 0.8;
+            // (gated by influence so drift is untouched when the image is disengaged)
+            float driftScale = 1.0 - cert * 0.8 * imageInfluence;
             vec2 drift = mix(circularDrift, chaoticDrift, driftChaos) * driftScale;
             vec2 point = neighbor + seedBase + drift;
 
@@ -324,9 +341,11 @@ void main() {
 
         float edgeDist = vor.y - vor.x;
 
-        // Cell color: hue from cell ID hash, value from certainty
+        // Cell color: hue from cell ID hash, value tracks image brightness.
+        // ncLocalCertainty is now a clean [0,1] brightness → bright source maps to
+        // bright cell; strength scales with both knobs (never inverts or dims).
         float hue = fract(hash1(vor.zw) + colorShift + fl * 0.15);
-        float cellValue = mix(0.55, ncLocalCertainty, certBrightness);
+        float cellValue = mix(0.55, ncLocalCertainty, certBrightness * imageInfluence);
         vec3 cellRGB = hsv2rgb(vec3(hue, colorSat, cellValue));
 
         // Edge detection: hard edge + soft glow
@@ -335,10 +354,9 @@ void main() {
         float glowFactor = (1.0 - smoothstep(0.0, max(glowRange, 0.001), edgeDist)) * edgeGlow;
         float totalEdge = clamp(max(edgeFactor, glowFactor), 0.0, 1.0);
 
-        // Edge color: brightness tracks local image brightness
-        // When imageInfluence=0, edges are full brightness; otherwise they dim in dark areas
-        float normCert = imageInfluence > 0.001 ? ncLocalCertainty / imageInfluence : 1.0;
-        float edgeBright = mix(1.0, mix(0.15, 1.0, normCert), imageInfluence);
+        // Edge color: brightness tracks local image brightness.
+        // When imageInfluence=0, edges are full brightness; otherwise they dim in dark areas.
+        float edgeBright = mix(1.0, mix(0.15, 1.0, ncLocalCertainty), imageInfluence);
         vec3 edgeRGB = hsv2rgb(vec3(hue, colorSat * 0.2, edgeBright));
         vec3 layerColor = mix(cellRGB, edgeRGB, totalEdge);
 
