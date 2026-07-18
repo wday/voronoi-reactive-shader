@@ -4,6 +4,8 @@ use std::ptr;
 
 static VS_SRC: &str = include_str!("shaders/fullscreen.vert.glsl");
 static FS_DENDRITIC: &str = include_str!("shaders/dendritic.frag.glsl");
+static TERRAIN: &str = include_str!("../../finding-ground-common/terrain.glsl");
+const TERRAIN_INCLUDE: &str = "//#include \"../../../finding-ground-common/terrain.glsl\"";
 
 pub struct QuadGeometry {
     vao: GLuint,
@@ -167,7 +169,8 @@ pub struct DendriticShader {
 
 impl DendriticShader {
     pub fn new() -> Self {
-        let program = ShaderProgram::new(FS_DENDRITIC);
+        let fs = FS_DENDRITIC.replace(TERRAIN_INCLUDE, TERRAIN);
+        let program = ShaderProgram::new(&fs);
         let quad = QuadGeometry::new();
         quad.setup_attrs(program.program);
 

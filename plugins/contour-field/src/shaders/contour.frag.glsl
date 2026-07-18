@@ -13,11 +13,9 @@
 // Harness notes: the shader viewer discovers `uniform float`s as adjustable
 // controls (0.5 = FFGL-neutral midpoint unless overridden by contour.defaults.json);
 // u_texel_size is fed as (1/w, 1/h); u_time is left static in the harness but
-// driven live by the Resolume plugin. No #include — the terrain block below is
-// inlined for now and will be factored into a shared terrain.glsl (concatenated
-// by the Rust plugin) when P2 Dendritic reuses it.
-//
-// Hash / value-noise: Dave Hoskins style (sine-free), matching the repo house style.
+// driven live by the Resolume plugin. The terrain (hash / noise / fbm / height)
+// is pulled from the shared finding-ground-common/terrain.glsl via the //#include
+// directive below (expanded by the harness/render tool and the Rust plugin).
 
 in vec2 v_uv;
 out vec4 out_color;
@@ -37,50 +35,8 @@ uniform float u_time;          // animation phase (static in harness, live in Re
 
 const float TAU = 6.28318530718;
 
-// --- Hash (Dave Hoskins, no sine) ---
-float hash1(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-vec2 hash2(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.xx + p3.yz) * p3.zy);
-}
-
-// --- value noise + fbm (the shared terrain, inlined) ---
-float vnoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);            // smoothstep interpolant
-    float a = hash1(i + vec2(0.0, 0.0));
-    float b = hash1(i + vec2(1.0, 0.0));
-    float c = hash1(i + vec2(0.0, 1.0));
-    float d = hash1(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float fbm(vec2 p) {
-    float sum = 0.0;
-    float amp = 0.5;
-    float freq = 1.0;
-    for (int i = 0; i < 5; i++) {
-        sum += amp * vnoise(p * freq);
-        freq *= 2.0;
-        amp *= 0.5;
-    }
-    return sum;                                   // ~[0,1]
-}
-
-// Height field: fbm domain-warped by a second fbm → sinuous ridges and valleys
-// instead of round blobs. This is the terrain P2/P3 will eventually share.
-float height(vec2 p) {
-    vec2 q = vec2(fbm(p + vec2(0.0, 0.0)),
-                  fbm(p + vec2(5.2, 1.3)));
-    float w = mix(0.0, 1.4, u_warp);
-    return fbm(p + w * q);
-}
+// Shared terrain (hash / vnoise / fbm / height) — single source of truth.
+//#include "../../../finding-ground-common/terrain.glsl"
 
 void main() {
     // Square up the domain so terrain isn't stretched by frame aspect.

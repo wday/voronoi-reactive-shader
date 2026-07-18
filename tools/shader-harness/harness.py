@@ -104,9 +104,25 @@ def discover_shaders(project_root):
     return shaders
 
 
+def _expand_includes(src, base_dir):
+    """Expand `//#include "relpath"` directives (relative to the including file).
+
+    A plain-comment marker so raw GLSL still parses if unprocessed. Recursive, so
+    an included file may itself include. Used to share terrain.glsl across the
+    Finding Ground generators without copy-paste.
+    """
+    import re
+
+    def repl(m):
+        inc = (base_dir / m.group(1)).resolve()
+        return _expand_includes(inc.read_text(), inc.parent)
+
+    return re.sub(r'^[ \t]*//#include\s+"([^"]+)"[ \t]*$', repl, src, flags=re.M)
+
+
 def load_shader_source(path):
-    """Load a fragment shader, upgrading version 150 → 330 for ModernGL."""
-    src = Path(path).read_text()
+    """Load a fragment shader, expanding includes and upgrading 150 → 330."""
+    src = _expand_includes(Path(path).read_text(), Path(path).parent)
     # ModernGL requires 330 core; our shaders use 150 which is compatible
     src = src.replace("#version 150", "#version 330")
     return src

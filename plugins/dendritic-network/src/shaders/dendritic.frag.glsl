@@ -12,10 +12,8 @@
 // carried with hand imperfection (meander, weight variation, breaks).
 //
 // Harness notes: same contract as contour.frag.glsl (v150, v_uv/out_color,
-// u_texel_size fed, u_time static in harness / live in Resolume).
-//
-// === shared terrain block — KEEP IN SYNC with contour.frag.glsl (no #include in
-// === the harness yet; the Rust plugin will concatenate a real terrain.glsl later).
+// u_texel_size fed, u_time static in harness / live in Resolume). The terrain is
+// pulled from the shared finding-ground-common/terrain.glsl (//#include below).
 
 in vec2 v_uv;
 out vec4 out_color;
@@ -35,37 +33,8 @@ uniform float u_time;          // drift (static in harness, live in Resolume)
 
 const float TAU = 6.28318530718;
 
-float hash1(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-vec2 hash2(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.xx + p3.yz) * p3.zy);
-}
-float vnoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = hash1(i + vec2(0.0, 0.0));
-    float b = hash1(i + vec2(1.0, 0.0));
-    float c = hash1(i + vec2(0.0, 1.0));
-    float d = hash1(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-float fbm(vec2 p) {
-    float sum = 0.0, amp = 0.5, freq = 1.0;
-    for (int i = 0; i < 5; i++) { sum += amp * vnoise(p * freq); freq *= 2.0; amp *= 0.5; }
-    return sum;
-}
-float height(vec2 p) {
-    vec2 q = vec2(fbm(p + vec2(0.0, 0.0)), fbm(p + vec2(5.2, 1.3)));
-    float w = mix(0.0, 1.4, u_warp);
-    return fbm(p + w * q);
-}
-// === end shared terrain block ===
+// Shared terrain (hash / vnoise / fbm / height) — single source of truth.
+//#include "../../../finding-ground-common/terrain.glsl"
 
 // Valley-line (thalweg) extraction from the terrain's Hessian. A river runs
 // along the valley floor, where the surface curves UP across the valley (large
