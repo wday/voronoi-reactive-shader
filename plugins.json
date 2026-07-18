@@ -99,6 +99,13 @@
       "dll": "flow_euler.dll"
     },
     {
+      "name": "wavefolder",
+      "display_name": "Wavefolder",
+      "type": "isf",
+      "shader": "shaders/wavefolder.fs",
+      "dll": "wavefolder.dll"
+    },
+    {
       "name": "varispeed_core",
       "display_name": "Varispeed Core (shared lib)",
       "type": "rust",
