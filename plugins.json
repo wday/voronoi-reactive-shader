@@ -85,6 +85,13 @@
       "dll": "contour_field.dll"
     },
     {
+      "name": "dendritic_network",
+      "display_name": "Dendritic Network",
+      "type": "rust",
+      "crate": "dendritic-network",
+      "dll": "dendritic_network.dll"
+    },
+    {
       "name": "stereo_depth",
       "display_name": "Stereo Depth",
       "type": "isf",

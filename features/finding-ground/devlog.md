@@ -104,3 +104,37 @@ Same class of bug as voronoi's earlier fix. **voronoi source was already centre-
 change needed; redeployed `voronoi_reactive.dll` so the running copy matches. Captured the
 pattern as a project memory so P3 Parcel (and any future generator with a zoom knob) does
 it from the start.
+
+**P1 committed** as two commits on `feature/finding-ground` (`docs:` spec, `feat:` plugin).
+
+## 2026-07-18 — Stage 2 (P2 Dendritic Network): shader + plugin, BUILT + DEPLOYED
+
+Rivers/watersheds over the **same terrain field as P1** (so they run down its valleys).
+
+**Approach — two tries (headless-render loop, 4 iterations):**
+1. *Drainage convergence (D8, single step)* — for each pixel, fraction of a neighbour
+   ring whose downhill flow points inward. **Failed:** single-step convergence only marks
+   local pits → speckled dots, not connected channels.
+2. *Hessian valley-line extraction* (kept): a thalweg is where the surface curves UP across
+   the valley (large positive principal curvature of the Hessian) AND we're at the bottom
+   of that cross-section (slope along the across-valley eigenvector ≈ 0). Gives **connected,
+   branching** lines. Then: probe curvature at a **coarse** radius (major valleys, not every
+   fbm wrinkle), **gate to the lowlands** (`1-smoothstep(h)`) so only low terrain carries
+   rivers, downstream **Hierarchy** widens with depth, and a final **harden** smoothstep
+   kills grey partial-coverage haze → crisp ink line-work. Reads as a dendritic drainage
+   network / river delta.
+
+**Plugin** `plugins/dendritic-network/` (`DnNw`, name `"Dendritic Net   "`, crate
+`dendritic-network`), cloned from contour-field. 9 params: Scale, Warp, **Density**
+(threshold: high→main rivers only), **Thickness**, **Hierarchy** (lowland gating), Jitter,
+Break Up, Warmth, Drift. Same generator plumbing (renders w/o input, viewport resolution,
+drift phase, centre-anchored scale). Registered + built (MSVC, 1.17s) + deployed.
+
+**Shared terrain still inlined+duplicated** (contour + dendritic each carry the fbm/height
+block, delimited by a KEEP-IN-SYNC marker) — harness has no `#include`. True factoring into
+a Rust-concatenated `terrain.glsl` still deferred; two copies is the current cost. When the
+terrain block changes, update both.
+
+**Starting look is a decent-but-tunable drainage network** (some chunkiness/fragmentation
+remains — live taste-tuning territory, same as P1). Uncommitted on `feature/finding-ground`.
+**Next:** user live-checks P2, then Stage 3 (P3 Parcel Subdivision).

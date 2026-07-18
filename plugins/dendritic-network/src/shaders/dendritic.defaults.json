@@ -1,0 +1,11 @@
+{
+  "u_scale": 0.40,
+  "u_warp": 0.55,
+  "u_density": 0.45,
+  "u_thickness": 0.50,
+  "u_hierarchy": 0.75,
+  "u_jitter": 0.25,
+  "u_breakup": 0.0,
+  "u_warmth": 0.60,
+  "u_time": 0.0
+}
