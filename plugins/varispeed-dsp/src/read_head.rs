@@ -1,0 +1,253 @@
+//! The floating fractional read head, unified for **live** (moving write cursor)
+//! and **frozen** (parked cursor) playback via an AGE model (VS-INTERP,
+//! VS-LOOP-WINDOW, VS-RATE).
+//!
+//! `age` = how many frames behind the live write cursor the read is. Each render
+//! frame the write cursor moves forward by `dr` (1 while recording, 0 while frozen)
+//! and the read moves forward by `rate`, so `age += dr - rate`, wrapped into the
+//! loop window `[0, len)`. The Read observes `dr` as `record_index - prev`, so
+//! **freeze is implicit** — it never needs to know the Write's Send. Two useful
+//! cases fall out with no special-casing:
+//!   - live, rate=1 ⇒ `dr - rate = 0` ⇒ age constant ⇒ a fixed-length delay.
+//!   - frozen (dr=0), rate=r ⇒ age moves at `-r` ⇒ the captured loop plays at r
+//!     (reverse if r<0, freeze-frame if r=0), wrapping every `len`.
+
+/// Two ring layers to fetch + the linear blend weight between them:
+/// `out = mix(layer0, layer1, frac)` (VS-INTERP).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sample {
+    pub layer0: u32,
+    pub layer1: u32,
+    pub frac: f32,
+}
+
+/// Advance the read `age` by one render frame.
+/// - `dr`   — how far the write cursor moved this frame (`record_index - prev`;
+///   1 while recording, 0 while frozen).
+/// - `rate` — playback speed: `>1` faster, `0<r<1` slower, `0` freeze-frame,
+///   `<0` reverse.
+/// `age` changes by `dr - rate`, wrapped into the loop window `[0, len)`.
+pub fn advance_age(age: f64, dr: f64, rate: f64, len: u32) -> f64 {
+    (age + dr - rate).rem_euclid(len.max(1) as f64)
+}
+
+/// Resolve the read to two ring layers + interp weight.
+/// - `record_index` — the write cursor (`vc_record_index`).
+/// - `age`   — frames behind the live cursor (already advanced; wrapped here too).
+/// - `warp`  — Doppler offset in frames; positive = newer (less age).
+/// - `len`   — loop window length; `depth` — ring depth.
+///
+/// Interpolates within the loop window; at the seam the oldest frame blends back to
+/// the newest (VS-SEAM — a raw discontinuity, not smoothed).
+pub fn sample_age(record_index: u64, age: f64, warp: f64, len: u32, depth: u32) -> Sample {
+    let len = len.max(1);
+    let depth = depth.max(1);
+    // warp shifts the read position; positive warp = newer = less age.
+    let e = (age - warp).rem_euclid(len as f64);
+    let a0 = e.floor();
+    let frac = (e - a0) as f32;
+    let age0 = a0 as i128;
+    let age1 = (a0 as i128 + 1) % len as i128; // wrap oldest→newest at the seam
+    // Frame at age `a` lives in ring layer (record_index - a) mod depth. i128 keeps
+    // the subtraction well-defined before the ring has filled (early frames read
+    // cleared/black slots — the warm-up, as in the delay line).
+    let layer = |a: i128| ((record_index as i128 - a).rem_euclid(depth as i128)) as u32;
+    Sample { layer0: layer(age0), layer1: layer(age1), frac }
+}
+
+/// Advance the confined-loop play head by `rate` frames, wrapped into `[0, len)`.
+/// Unlike [`advance_age`] there is no `dr` term: the head is a fixed play position
+/// over a fixed window, so it moves purely at `rate` (Confine mode).
+pub fn advance_head(head: f64, rate: f64, len: u32) -> f64 {
+    (head + rate).rem_euclid(len.max(1) as f64)
+}
+
+/// Confined-loop read (Confine mode): a FIXED window of `len` slots at ring layers
+/// `[0, len)`, sampled at float position `pos` (wraps mod len) with linear
+/// interpolation across the seam. The Write records back into `floor(head)` of this
+/// same window, so feedback recirculates in place and accumulates (like the delay's
+/// sustain) instead of marching across the full ring — no ring-lap reset.
+pub fn sample_confined(pos: f64, len: u32, depth: u32) -> Sample {
+    let len = len.max(1);
+    let depth = depth.max(1);
+    let w = pos.rem_euclid(len as f64);
+    let i0 = w.floor();
+    let frac = (w - i0) as f32;
+    let l0 = (i0 as u32) % len;
+    let l1 = (l0 + 1) % len;
+    Sample { layer0: l0 % depth, layer1: l1 % depth, frac }
+}
+
+/// The integer slot the confined play head sits on — the slot the Write records
+/// back into (Confine mode).
+pub fn confined_slot(head: f64, len: u32) -> u32 {
+    (head.rem_euclid(len.max(1) as f64)).floor() as u32 % len.max(1)
+}
+
+/// Sample a `len`-slot block that starts at ring layer `base` (Reverse / ping-pong
+/// mode). Reads float position `pos` (wraps mod `len`) with linear interpolation
+/// across the seam, exactly like [`sample_confined`] but offset to `[base, base+len)`
+/// instead of `[0, len)` — so the two ping-pong blocks live at bases `0` and `len`.
+/// The play head honours Rate (reverse/fwd/fast/slow) while the Write records the
+/// live signal forward into the *other* block.
+pub fn sample_block(base: u32, pos: f64, len: u32, depth: u32) -> Sample {
+    let len = len.max(1);
+    let depth = depth.max(1);
+    let w = pos.rem_euclid(len as f64);
+    let i0 = w.floor();
+    let frac = (w - i0) as f32;
+    let l0 = (base + i0 as u32) % depth;
+    let l1 = (base + ((i0 as u32 + 1) % len)) % depth; // wrap within the block
+    Sample { layer0: l0, layer1: l1, frac }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confined_window_maps_to_low_layers() {
+        // Fixed window [0, len): slot = floor(pos) mod len, ring layer == slot.
+        let s = sample_confined(2.25, 8, 240);
+        assert_eq!(s.layer0, 2);
+        assert_eq!(s.layer1, 3);
+        assert!((s.frac - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn confined_seam_wraps_within_window() {
+        let s = sample_confined(7.5, 8, 240);
+        assert_eq!(s.layer0, 7);
+        assert_eq!(s.layer1, 0); // wraps to window start, never into the rest of the ring
+    }
+
+    #[test]
+    fn block_offsets_to_base_layer() {
+        // Second ping-pong block: len 8 at base 8 → layers [8, 16).
+        let s = sample_block(8, 2.25, 8, 480);
+        assert_eq!(s.layer0, 10); // 8 + 2
+        assert_eq!(s.layer1, 11); // 8 + 3
+        assert!((s.frac - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn block_seam_wraps_within_block_not_ring() {
+        // At the block seam the interp partner wraps back to the block start (base),
+        // never bleeding into the neighbouring block.
+        let s = sample_block(8, 7.5, 8, 480);
+        assert_eq!(s.layer0, 15); // 8 + 7 (block end)
+        assert_eq!(s.layer1, 8); // wraps to 8 + 0 (block start), not layer 16
+    }
+
+    #[test]
+    fn block_reverse_walks_indices_down() {
+        // Reverse play at -1x over a len-4 block at base 4: play head reset to len-1
+        // (newest), then walks 3,2,1,0 — clean reverse of the recorded frames.
+        let base = 4;
+        let mut pos = 3.0; // reset to len-1 for reverse start-at-newest
+        let seen: Vec<u32> = (0..4)
+            .map(|_| {
+                let l0 = sample_block(base, pos, 4, 480).layer0;
+                pos = advance_head(pos, -1.0, 4);
+                l0
+            })
+            .collect();
+        assert_eq!(seen, vec![7, 6, 5, 4]); // base+3, +2, +1, +0
+    }
+
+    #[test]
+    fn confined_head_advances_and_wraps() {
+        let h = advance_head(7.5, 1.0, 8);
+        assert!((h - 0.5).abs() < 1e-9);
+        assert_eq!(confined_slot(7.5, 8), 7);
+        assert_eq!(confined_slot(0.2, 8), 0);
+    }
+
+    #[test]
+    fn confined_reverse_head_wraps() {
+        let h = advance_head(0.5, -1.0, 8);
+        assert!((h - 7.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn newest_frame_at_age_zero() {
+        // age 0 = the just-written frame (record_index mod depth).
+        let s = sample_age(100, 0.0, 0.0, 8, 240);
+        assert_eq!(s.layer0, 100);
+        assert_eq!(s.frac, 0.0);
+    }
+
+    #[test]
+    fn fractional_age_blends_two_adjacent_frames() {
+        // age 2.5 blends frame (100-2) with the one newer (100-1)... wait: age0=2,
+        // age1=3 → layers 98 and 97 (older side). frac 0.5.
+        let s = sample_age(100, 2.5, 0.0, 8, 240);
+        assert_eq!(s.layer0, 98); // 100 - 2
+        assert_eq!(s.layer1, 97); // 100 - 3
+        assert!((s.frac - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn seam_blends_oldest_back_to_newest() {
+        // len 8, age 7.5: age0=7 (oldest) → 100-7=93; age1=(7+1)%8=0 (newest) → 100.
+        let s = sample_age(100, 7.5, 0.0, 8, 240);
+        assert_eq!(s.layer0, 93);
+        assert_eq!(s.layer1, 100);
+        assert!((s.frac - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ring_wraps_modulo_depth() {
+        // record_index small: 3 - 5 wraps into the (cleared) top of the ring.
+        let s = sample_age(3, 5.0, 0.0, 8, 240);
+        assert_eq!(s.layer0, (240 + 3 - 5) as u32); // 238
+    }
+
+    #[test]
+    fn warp_shifts_toward_newer() {
+        // age 3, warp +1 ⇒ effective age 2 (one frame newer).
+        let s = sample_age(100, 3.0, 1.0, 8, 240);
+        assert_eq!(s.layer0, 98); // 100 - 2
+    }
+
+    #[test]
+    fn live_rate_one_holds_constant_age() {
+        // dr=1 (recording), rate=1 ⇒ age unchanged ⇒ fixed delay.
+        let a = advance_age(3.0, 1.0, 1.0, 8);
+        assert!((a - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn frozen_forward_playback_decreases_age() {
+        // dr=0 (frozen), rate=1 ⇒ age moves -1 (plays the loop forward), wrapping.
+        let a = advance_age(0.0, 0.0, 1.0, 8);
+        assert!((a - 7.0).abs() < 1e-9); // 0 - 1 wraps to 7
+    }
+
+    #[test]
+    fn frozen_reverse_increases_age() {
+        // dr=0, rate=-1 ⇒ age moves +1 (reverse).
+        let a = advance_age(6.0, 0.0, -1.0, 8);
+        assert!((a - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn freeze_frame_holds_age_when_frozen() {
+        // dr=0, rate=0 ⇒ age constant ⇒ a single held frame.
+        assert!((advance_age(2.3, 0.0, 0.0, 8) - 2.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn frozen_forward_completes_a_loop() {
+        // Play a frozen len-4 loop forward; ages visit 0,3,2,1,0,… (mod 4).
+        let mut age = 0.0;
+        let seen: Vec<u32> = (0..4)
+            .map(|_| {
+                let l0 = sample_age(100, age, 0.0, 4, 240).layer0;
+                age = advance_age(age, 0.0, 1.0, 4);
+                l0
+            })
+            .collect();
+        assert_eq!(seen, vec![100, 97, 98, 99]); // ages 0,3,2,1 → 100,97,98,99
+    }
+}

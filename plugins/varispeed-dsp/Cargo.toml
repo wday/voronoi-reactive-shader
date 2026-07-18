@@ -1,0 +1,17 @@
+[package]
+name = "varispeed-dsp"
+version = "0.1.0"
+edition = "2021"
+
+# Pure, host- and GPU-independent logic for the Varispeed atom (variable-rate
+# looper). NO ffgl-core, NO gl — so it compiles and `cargo test`s natively on any
+# platform, unlike the plugin cdylibs which need the FFGL C++ toolchain. Single
+# source of truth for the floating fractional read (window sampling + linear
+# interpolation, VS-INTERP / VS-LOOP-WINDOW), the read-position advance
+# (VS-RATE, incl. reverse/freeze), and the bar-phase Doppler (VS-DOPPLER).
+# varispeed-core and the plugins delegate to it; the headless tests exercise it.
+# Spec: features/varispeed/requirements.md.
+[lib]
+name = "varispeed_dsp"
+
+[dependencies]

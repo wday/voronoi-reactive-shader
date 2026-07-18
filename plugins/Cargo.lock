@@ -764,6 +764,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
+name = "varispeed-core"
+version = "0.1.0"
+dependencies = [
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
+name = "varispeed-dsp"
+version = "0.1.0"
+
+[[package]]
+name = "varispeed-read"
+version = "0.1.0"
+dependencies = [
+ "delay-dsp",
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "pluglib",
+ "tracing",
+ "varispeed-dsp",
+]
+
+[[package]]
+name = "varispeed-write"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "pluglib",
+ "tracing",
+]
+
+[[package]]
 name = "video-looper"
 version = "0.1.0"
 dependencies = [

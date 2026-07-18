@@ -90,6 +90,27 @@
       "type": "isf",
       "shader": "shaders/flow_euler.fs",
       "dll": "flow_euler.dll"
+    },
+    {
+      "name": "varispeed_core",
+      "display_name": "Varispeed Core (shared lib)",
+      "type": "rust",
+      "crate": "varispeed-core",
+      "dll": "varispeed_core.dll"
+    },
+    {
+      "name": "varispeed_write",
+      "display_name": "Varispeed Write",
+      "type": "rust",
+      "crate": "varispeed-write",
+      "dll": "varispeed_write.dll"
+    },
+    {
+      "name": "varispeed_read",
+      "display_name": "Varispeed Read",
+      "type": "rust",
+      "crate": "varispeed-read",
+      "dll": "varispeed_read.dll"
     }
   ]
 }

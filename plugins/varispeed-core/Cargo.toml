@@ -1,0 +1,21 @@
+[package]
+name = "varispeed-core"
+version = "0.1.0"
+edition = "2021"
+
+# cdylib so the Varispeed Read + Write DLLs can runtime-load ONE copy (shared
+# static tape). Output artifact: varispeed_core.{dll,dylib}; must sit beside the
+# plugin DLLs (a vc_* loader in pluglib locates it from each plugin's directory).
+# rlib: lets the headless integration tests link it in-process (call vc_* directly,
+# no cross-DLL loader) — additive, does not affect the DLL.
+#
+# Fully SEPARATE from delay-core: the shipped delay (dc_*) is never touched
+# (VS-ISOLATION). Single tape, full-ring topology, half-res RGBA16F storage.
+[lib]
+name = "varispeed_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gl = { workspace = true }
+gl_loader = { workspace = true }
+tracing = { workspace = true }

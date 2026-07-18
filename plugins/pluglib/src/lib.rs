@@ -8,8 +8,10 @@
 //!      so both plugins build their passes from one implementation.
 
 mod loader;
+mod vc_loader;
 
 pub use loader::{api, Api};
+pub use vc_loader::{vc_api, VcApi};
 
 use gl::types::*;
 use std::ffi::CString;

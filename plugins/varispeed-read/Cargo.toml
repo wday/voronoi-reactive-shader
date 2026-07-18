@@ -1,0 +1,19 @@
+[package]
+name = "varispeed-read"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "varispeed_read"
+crate-type = ["cdylib"]
+
+[dependencies]
+ffgl-core = { workspace = true }
+gl = { workspace = true }
+gl_loader = { workspace = true }
+tracing = { workspace = true }
+pluglib = { path = "../pluglib" }
+varispeed-dsp = { path = "../varispeed-dsp" }
+# Reused (as a pure library, unmodified) for the beat/ms/frames -> frames time
+# conversion — the same one DlyW uses. Does not affect the shipped delay.
+delay-dsp = { path = "../delay-dsp" }
