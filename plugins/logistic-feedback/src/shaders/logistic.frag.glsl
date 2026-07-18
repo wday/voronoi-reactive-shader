@@ -9,16 +9,22 @@ uniform int u_spatial_mode; // 0=off, 1=radial, 2=edge
 uniform float u_dry_wet;
 uniform vec2 u_texel_size;
 
+// Keep samples half a texel inside the texture edge so bilinear never blends with
+// the black border — a dark edge fringe, and false Sobel edges at the frame boundary.
+vec4 sampleContent(vec2 uv) {
+    return texture(u_input, clamp(uv, 0.5 * u_texel_size, 1.0 - 0.5 * u_texel_size));
+}
+
 // Sobel edge magnitude
 float sobel_magnitude(vec2 uv) {
-    float tl = dot(texture(u_input, uv + vec2(-1, -1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float tc = dot(texture(u_input, uv + vec2( 0, -1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float tr = dot(texture(u_input, uv + vec2( 1, -1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float ml = dot(texture(u_input, uv + vec2(-1,  0) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float mr = dot(texture(u_input, uv + vec2( 1,  0) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float bl = dot(texture(u_input, uv + vec2(-1,  1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float bc = dot(texture(u_input, uv + vec2( 0,  1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
-    float br = dot(texture(u_input, uv + vec2( 1,  1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float tl = dot(sampleContent(uv +vec2(-1, -1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float tc = dot(sampleContent(uv +vec2( 0, -1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float tr = dot(sampleContent(uv +vec2( 1, -1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float ml = dot(sampleContent(uv +vec2(-1,  0) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float mr = dot(sampleContent(uv +vec2( 1,  0) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float bl = dot(sampleContent(uv +vec2(-1,  1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float bc = dot(sampleContent(uv +vec2( 0,  1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
+    float br = dot(sampleContent(uv +vec2( 1,  1) * u_texel_size).rgb, vec3(0.299, 0.587, 0.114));
 
     float gx = -tl - 2.0*ml - bl + tr + 2.0*mr + br;
     float gy = -tl - 2.0*tc - tr + bl + 2.0*bc + br;
@@ -27,7 +33,7 @@ float sobel_magnitude(vec2 uv) {
 }
 
 void main() {
-    vec4 original = texture(u_input, v_uv);
+    vec4 original = sampleContent(v_uv);
 
     // Compute spatial r modifier
     float r = u_r_base;
