@@ -92,6 +92,13 @@
       "dll": "dendritic_network.dll"
     },
     {
+      "name": "parcel_subdivision",
+      "display_name": "Parcel Subdivision",
+      "type": "rust",
+      "crate": "parcel-subdivision",
+      "dll": "parcel_subdivision.dll"
+    },
+    {
       "name": "stereo_depth",
       "display_name": "Stereo Depth",
       "type": "isf",

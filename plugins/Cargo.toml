@@ -23,6 +23,7 @@ members = [
     "slipgrid",
     "contour-field",
     "dendritic-network",
+    "parcel-subdivision",
 ]
 
 [workspace.dependencies]

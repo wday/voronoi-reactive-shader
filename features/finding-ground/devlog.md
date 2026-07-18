@@ -138,3 +138,36 @@ terrain block changes, update both.
 **Starting look is a decent-but-tunable drainage network** (some chunkiness/fragmentation
 remains — live taste-tuning territory, same as P1). Uncommitted on `feature/finding-ground`.
 **Next:** user live-checks P2, then Stage 3 (P3 Parcel Subdivision).
+
+**P2 committed** (`feat: … P2 Dendritic Network (DnNw)`).
+
+## 2026-07-18 — Shared terrain factor + Stage 3 (P3 Parcel Subdivision)
+
+### Factored the shared terrain (finally, not a 3rd copy)
+- `plugins/finding-ground-common/terrain.glsl` — canonical hash/vnoise/fbm/height,
+  **single source of truth**. Reads the includer's `u_warp`.
+- **Include mechanism** (harness had no `#include`): a plain-comment directive
+  `//#include "<relpath>"`, expanded by (a) the harness `load_shader_source`
+  (`_expand_includes`, relative to the including file, recursive), (b) my headless
+  render tool, and (c) the Rust plugins (`include_str!(terrain) + FS.replace(directive)`).
+  Backward-compatible; shaders without the directive are untouched.
+- **Gotcha:** moderngl has its own naive `#include` scanner that is NOT comment-aware —
+  it tripped on the literal `#include "…"` token sitting inside terrain.glsl's *comment*.
+  Fix: never write the literal quoted include token in comments.
+- **Migrated P1 + P2** onto the include and **verified pixel-identical** headless (matched
+  params → `getbbox() is None`), so the shipped plugins didn't regress. Rebuilt + redeployed.
+
+### P3 Parcel Subdivision — BUILT + DEPLOYED
+Generator `plugins/parcel-subdivision/` (`PrcL`, name `"Parcel Subdiv   "`, crate
+`parcel-subdivision`). The hard-geometric counterweight: survey **townships** (integer
+grid / graticule) over the shared terrain, each recursively **BSP-split into parcels**;
+the **lowlands subdivide deeper** (`terrainDepth` from `height()` at township centre) so
+parcels register with P2's rivers / P1's valleys — "conflicts of use". 9 params: Scale,
+Warp, **Depth**, **Regularity** (regular half-splits ↔ irregular), **Border**, **Inset**
+(parcel gap), Jitter, Warmth, Drift. Same generator plumbing + centre-anchored scale.
+**Strongest first render of the three** — reads immediately as a cadastral map. Built
+(MSVC ~1.2s) + deployed.
+
+**Milestone M2 reached** (P1+P2+P3 live, overlaying coherently via one terrain).
+Uncommitted parts: the factor + P3. **Next:** user live-checks P3; then Stage 4 —
+compose the `.avc` (generators + flow/voronoi/delay/mirror/wavefolder hybrid chains).
