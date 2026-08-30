@@ -7,6 +7,15 @@ uniform float u_amount;
 uniform int u_pattern;  // 0=cyclic, 1=mutual
 uniform float u_angle;
 uniform float u_dry_wet;
+uniform vec2 u_uv_scale;
+
+// u_uv_scale = Width/HardwareWidth. Resolume may hand us a texture larger than the
+// frame (NPOT hardware padding), in which case the content occupies only
+// [0, u_uv_scale] and the rest is black. Sampling raw uv over [0,1] would read that
+// padding, and — worse — the edge clamp would pin off-frame samples to the padded
+// texture's last texel, i.e. BLACK, doing the exact opposite of the edge-extend it
+// is there to provide. Mapping through u_uv_scale keeps every sample on real
+// content. A no-op when the host allocates exact-size textures (u_uv_scale == 1).
 
 // Keep every sample half a texel inside the texture edge so filtering never blends
 // with the black border (a dark edge fringe, and a thin seam where a displaced
@@ -14,7 +23,7 @@ uniform float u_dry_wet;
 // textureSize — no host uniform needed.
 vec4 sampleContent(vec2 uv) {
     vec2 texel = 1.0 / vec2(textureSize(u_input, 0));
-    return texture(u_input, clamp(uv, 0.5 * texel, 1.0 - 0.5 * texel));
+    return texture(u_input, clamp(uv * u_uv_scale, 0.5 * texel, u_uv_scale - 0.5 * texel));
 }
 
 // Catmull-Rom basis for taps at -1, 0, +1, +2. Sums to 1 for any f.
@@ -42,9 +51,9 @@ vec4 sampleCubic(vec2 uv) {
     vec2 texSize = vec2(textureSize(u_input, 0));
     vec2 texel = 1.0 / texSize;
     vec2 lo = 0.5 * texel;
-    vec2 hi = 1.0 - 0.5 * texel;
+    vec2 hi = u_uv_scale - 0.5 * texel;
 
-    vec2 p = uv * texSize - 0.5;      // continuous texel index
+    vec2 p = uv * u_uv_scale * texSize - 0.5;   // content uv -> continuous texel index
     vec2 i0 = floor(p);
     vec2 f = p - i0;
     vec4 wx = crWeights(f.x);

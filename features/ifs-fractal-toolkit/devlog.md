@@ -55,3 +55,54 @@ ever needs to run somewhere weaker; the 16-tap point-sample form was chosen for
 being obviously correct.
 
 Built, deployed. Shader compile-checked headlessly before deploy.
+
+## 2026-08-30 — NPOT padding: channel-displace + logistic-feedback
+
+Both plugins ignored `u_uv_scale` entirely and sampled raw `uv` across `[0,1]`,
+assuming the input texture's hardware size equals the frame size. Every other
+shader in the repo corrects for this; these two were the holdouts.
+
+Prompted by an observed artifact: **channel-displace introducing unexpected lines.**
+That is exactly what this bug produces. The edge clamp reads
+
+```glsl
+clamp(uv, 0.5 * texel, 1.0 - 0.5 * texel)
+```
+
+so when the texture is padded, `1.0 - 0.5*texel` is the last texel of the **padded**
+texture — black. A channel displaced off-frame therefore clamps to *black* instead
+of edge-extending, which is the precise opposite of the comment's stated intent
+("clamps to edge-extend instead of black"). Result: black streaks along the frame
+edge wherever the displacement pushes a channel out.
+
+`logistic-feedback` had the same mapping bug plus a second one: its Sobel taps
+stepped by `u_texel_size` (= 1/hardware) while being added to a content-space uv.
+Once `sampleContent` scales by `u_uv_scale`, the step has to be one *content*
+texel — `u_texel_size / u_uv_scale` — or the edge detector probes the wrong
+distance.
+
+### Measured (headless, 200px content in a 256px texture, u_uv_scale = 0.78125)
+
+Fraction of the output that is fully black, and max deviation from an exact copy:
+
+| | max abs diff | fully-black pixels |
+|---|---|---|
+| channel-displace, Amount 0 — before | 255 | 38.4% |
+| channel-displace, Amount 0 — after | **0** | **0.0%** |
+| channel-displace, Amount 0.05 — before | 255 | 40.4% |
+| channel-displace, Amount 0.05 — after | 255 (the effect working) | **0.0%** |
+| logistic-feedback, Dry/Wet 0 — before | 255 | 38.4% |
+| logistic-feedback, Dry/Wet 0 — after | **0** | **0.0%** |
+
+38.4% is exactly `1 - (200/256)²`, i.e. the padding region — confirming the
+mechanism rather than just the symptom.
+
+### Note on whether this was live
+The fix is a **no-op when the host allocates exact-size textures** (`u_uv_scale ==
+1`), which is normal on modern GPUs, and the unpadded path was re-verified
+unchanged (identity still bit-exact, cubic still 0.761 HF/lap). So this may have
+been latent rather than active. If the reported lines persist after this deploy,
+padding was not the cause and the next suspect is the ordinary edge-extend
+behaviour at the clamp, which is real and by design.
+
+Built, deployed. Shaders compile-checked headlessly before deploy.

@@ -28,8 +28,15 @@ impl SimpleFFGLInstance for LogisticFeedback {
             self.shader = Some(LogisticShader::new());
         }
 
-        let input_tex = if !frame_data.textures.is_empty() {
-            frame_data.textures[0].Handle as GLuint
+        let (input_tex, uv_scale) = if !frame_data.textures.is_empty() {
+            let t = &frame_data.textures[0];
+            (
+                t.Handle as GLuint,
+                [
+                    t.Width as f32 / t.HardwareWidth as f32,
+                    t.Height as f32 / t.HardwareHeight as f32,
+                ],
+            )
         } else {
             unsafe {
                 gl::ClearColor(0.0, 0.0, 0.0, 1.0);
@@ -57,6 +64,7 @@ impl SimpleFFGLInstance for LogisticFeedback {
             self.params.sensitivity(),
             self.params.spatial_mode(),
             self.params.dry_wet(),
+            uv_scale,
         );
 
         // Restore host GL state
