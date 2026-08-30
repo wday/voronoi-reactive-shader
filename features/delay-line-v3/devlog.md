@@ -655,3 +655,70 @@ as a (currently fixed) characteristic.
 Built clean; **deploy still blocked** (Resolume holding the DLLs). Pending core +
 tap (reseed/linear-default) AND now core + write (float/scale) all need Resolume
 closed. Close it, then `make deploy PLUGIN=delay_core delay_write delay_tap`.
+
+## 2026-08-29 — Full-res tape (TAPE_SCALE 1.0) + BUFFER_DEPTH 240 → 120
+
+Live-use feedback after a run of gigs: the delay is great in general, but the
+half-res tape "mushes tight fractal feedback into blobs". Deep feedback loops
+lose their structure after a handful of laps and settle into goop.
+
+### Diagnosis
+Not just "half the detail". Each lap the signal goes full-res → 2x2 box
+downsample (Write, `TAPE_SCALE = 0.5`) → bilinear magnify (Tap, tape is
+`GL_LINEAR`). That round trip has gain ~1.0 at DC but only **~0.35 at mid-high
+spatial frequencies**, and exactly 0 above the tape's Nyquist. So fine detail
+decays ~3x faster per lap than the image as a whole: structure survives, texture
+does not. Fractal generation needs loop gain >= 1 in the band where the transform
+creates new detail; we were running ~0.35 there. It compounds, so it reads as a
+cliff rather than a gradient.
+
+### The constraint that justified 0.5 no longer holds
+`BUFFER_DEPTH = 240` is 4 s at 60 fps. Actual live use is **1/16 to 1/4 note, or
+2-3 frames for tight feedback**, at 1080p/60 (projector scale in DIY spaces) —
+i.e. 30 frames at 120 BPM, 60 at 60 BPM. We were paying 4-8x for headroom that
+never gets used, and spending it on resolution we do use.
+
+Per channel at 1920x1080, RGBA16F (8 B/texel), `NUM_CHANNELS = 2` and allocation
+is lazy (only a Write tick with non-zero dims allocates):
+
+| depth | half-res | full-res |
+|-------|----------|----------|
+| 240   | 996 MB   | 3.98 GB  |
+| 120   | 498 MB   | **1.99 GB** |
+
+Full-res x 120 = ~4 GB for both channels on a 12 GB card. Fits comfortably.
+Bandwidth is a non-issue: full-res write + read at 1080p/60 is ~2 GB/s against
+the card's ~600 GB/s.
+
+### Implemented
+- **Core**: `BUFFER_DEPTH` 240 → 120. Stale doc references to the 240-layer /
+  reduced-resolution tape updated.
+- **Write**: `TAPE_SCALE` 0.5 → 1.0. No code change beyond the constant — the
+  sizing math, viewport, and `dc_frame_tick` dims all key off it already, and the
+  core is resolution-agnostic. `MAX_DELAY_MS` 4000 → 2000, `MAX_DELAY_FRAMES`
+  239 → 119, both noted as tracking `BUFFER_DEPTH - 1`.
+- **dsp**: `timing.rs` doc + test `MAX` 240 → 120, and the 4000 ms max-clamp case
+  restated as 2000 ms. `ring.rs` doc note that its tests pass their own `max_loop`
+  and are not tied to `BUFFER_DEPTH`.
+- **Tap**: zero changes again, for the same reason as the 2026-07-08 entry — it
+  reads with normalised uv, so tape resolution is invisible to it.
+
+### Consequence to watch
+Subdivisions longer than ~1 bar now clamp at 119 frames (2 s). At 120 BPM "1 bar"
+lands exactly; at slower tempos it clamps. Accepted — long delays were reported
+as not playable live anyway. `BUFFER_DEPTH` is a one-line bump if that changes.
+
+Also: the downscale was providing free anti-aliasing. At full res, 2-3 frame
+feedback may shimmer more. That is what the Bloom side of the next feature's
+Focus knob is for — softening becomes a swept effect rather than a property of
+the tape.
+
+### Verification
+- `cargo test -p delay-dsp`: 17/17 pass.
+- `delay_core` + `delay_write` built for Windows/MSVC.
+- Live Resolume check pending — this is a "play it and see" change by design.
+
+### Next
+`features/delay-lens/` — the five degrade knobs on the Tap (Focus/Bloom,
+Aberration, Vignette, Grain, Shear). Sequenced deliberately after this so they
+get tuned against a clean loop rather than against the existing mush.

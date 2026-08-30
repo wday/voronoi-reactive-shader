@@ -14,8 +14,8 @@ pub enum SyncMode {
 }
 
 /// Convert the Time controls to a delay in frames, clamped to `1..=max_frames`.
-/// `max_frames` is `dc_buffer_depth()` (240) in the Write; delay-core then clamps
-/// the effective loop length to `1..=239` (requirements `WRITE-PARAM-TIME`,
+/// `max_frames` is `dc_buffer_depth()` (120) in the Write; delay-core then clamps
+/// the effective loop length to `1..=119` (requirements `WRITE-PARAM-TIME`,
 /// `CORE-DEPTH`).
 ///
 /// - `Subdivision`: `round(subdivision_beats * (60 / bpm) * fps)`. If `bpm <= 0`
@@ -53,7 +53,7 @@ pub fn delay_frames(
 mod tests {
     use super::*;
 
-    const MAX: u32 = 240; // dc_buffer_depth()
+    const MAX: u32 = 120; // dc_buffer_depth()
 
     #[test]
     fn frames_mode_is_passthrough_clamped() {
@@ -66,8 +66,8 @@ mod tests {
     fn ms_mode_rounds_to_frames() {
         // 500 ms at 60 fps = 30 frames.
         assert_eq!(delay_frames(SyncMode::Ms, 0.0, 500.0, 0, 120.0, 60.0, MAX), 30);
-        // 4000 ms at 60 fps = 240 frames -> hits the max (and, downstream, runs at 239).
-        assert_eq!(delay_frames(SyncMode::Ms, 0.0, 4000.0, 0, 120.0, 60.0, MAX), 240);
+        // 2000 ms at 60 fps = 120 frames -> hits the max (and, downstream, runs at 119).
+        assert_eq!(delay_frames(SyncMode::Ms, 0.0, 2000.0, 0, 120.0, 60.0, MAX), 120);
         // Rounding: 16 ms at 60 fps = 0.96 frames -> rounds to 1.
         assert_eq!(delay_frames(SyncMode::Ms, 0.0, 16.0, 0, 120.0, 60.0, MAX), 1);
     }

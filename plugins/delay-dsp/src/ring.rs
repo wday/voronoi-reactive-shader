@@ -27,7 +27,9 @@ pub struct Ring {
 
 impl Ring {
     /// New ring with `loop_length` clamped to `1..=max_loop`. `max_loop` is
-    /// `BUFFER_DEPTH - 1` in delay-core (239).
+    /// `BUFFER_DEPTH - 1` in delay-core (119). The unit tests below exercise the
+    /// clamp math generically and pass their own `max_loop`, so they are not tied
+    /// to that value.
     pub fn new(loop_length: u32, max_loop: u32) -> Self {
         Self {
             loop_length: loop_length.clamp(1, max_loop.max(1)),
