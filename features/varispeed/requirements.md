@@ -250,10 +250,22 @@ playback enters the Read output via `Wet`, gets recorded into the active block v
   one records forward while the other plays at `Rate`, swapping every `L` recorded
   frames. Verifiable (dsp): the reverse play head walks block-layer indices
   `L-1, L-2, …, 0` at `Rate=-1`.
-- **VS-REV-CAPACITY** — Reverse SHALL require `2L ≤ N`; `N` is grown to **480** so a
-  full-length block (`L ≤ 239`) fits twice. Free/Confined keep the enlarged max.
-  Changing `L` restarts the ping-pong (re-anchors the two blocks) but SHALL NOT
-  reseed the tape (per `VS-RING`).
+- **VS-REV-CAPACITY** — Reverse SHALL require `2L ≤ N`; `N` is **240** so a
+  full-length block (`L ≤ 120`) fits twice. Free/Confined get the longer `N - 1`
+  max for free. Changing `L` restarts the ping-pong (re-anchors the two blocks) but
+  SHALL NOT reseed the tape (per `VS-RING`).
+
+  > **Amended 2026-08-29.** `N` was 480 (`L ≤ 239`). Halved to pay for the tape
+  > going full-res (`WRITE-TAPE-SCALE` = 1.0): half-res storage cost ~0.35
+  > round-trip gain at high spatial frequencies, which mushed tight fractal
+  > feedback into blobs within a few laps. Full-res at `N = 240` is ~3.98 GB at
+  > 1080p; at `N = 480` it would be 7.96 GB, too much beside Resolume on a 12 GB
+  > card. Accepted trade: max loop 4 s → 2 s, against observed live use of
+  > 1/16..1/4 note. See `devlog.md` 2026-08-29.
+  >
+  > Note the slider max is `N/2 = 120` exactly, with **no `-1`**: the `depth - 1`
+  > form is the delay line's N+1 stitch and does not apply here (the caps are
+  > computed per mode at runtime in `varispeed-read/src/lib.rs`).
 - **VS-REV-LATENCY** — Reverse output lags input by one block (`L` frames); this is
   inherent (non-causal reversal) and accepted, matching a hardware reverse delay.
 - **VS-REV-FEEDBACK** — The reversed tail SHALL decay at `Send·Wet` per block (no

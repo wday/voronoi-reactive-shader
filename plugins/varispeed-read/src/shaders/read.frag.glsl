@@ -7,8 +7,8 @@
 //   perceptual (u_gamma == 1): out = clamp(dry*live + wet*loop, 0, 1)
 //   linear     (u_gamma  > 1): out = encode(clamp(dry*decode(live)
 //                                              + wet*decode(loop), 0, 1))
-// The buffer is a half-res texture array; sampling with normalised uv + LINEAR
-// gives the free spatial upscale, and mix() gives the temporal interpolation.
+// The buffer is a full-res texture array, so sampling with normalised uv is a
+// 1:1 fetch (no spatial upscale); mix() still gives the temporal interpolation.
 
 in vec2 v_uv;
 out vec4 out_color;

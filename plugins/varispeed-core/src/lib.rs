@@ -1,6 +1,6 @@
 //! varispeed-core — the shared GPU ring buffer + write-cursor barrier for the
 //! Varispeed atom, behind a C ABI. **Single tape** (no channels), **full-ring**
-//! topology, **half-res RGBA16F** storage (VS-STORAGE).
+//! topology, **full-res RGBA16F** storage (VS-STORAGE).
 //!
 //! Fully separate from `delay-core`: the shipped delay (`dc_*`) is never touched
 //! (VS-ISOLATION). Like delay-core, it is one owner across the two plugin DLLs
@@ -20,15 +20,20 @@ use gl::types::*;
 use std::sync::{Mutex, Once};
 
 /// Ring depth (layers of the 2D texture array). Caps the max loop / capture
-/// window. 480 (8 s @60 fps) — doubled from the delay line's 240 so Reverse
-/// (ping-pong) mode can hold TWO full-length blocks at once (record-forward +
-/// frozen-reverse), each up to ~4 s. Free/Confined get the longer max for free.
-/// Half-res RGBA16F keeps the single tape ~2 GB (VS-STORAGE; VRAM to spare given
-/// the half-res spatial compression).
-const BUFFER_DEPTH: u32 = 480;
+/// window. 240 (4 s @60 fps) — kept at **twice** `MAX_LOOP_FRAMES` so Reverse
+/// (ping-pong) mode can still hold TWO full-length blocks at once (record-forward
+/// + frozen-reverse), each up to ~2 s, tiling the ring exactly. Free/Confined get
+/// the longer `depth - 1` max for free.
+///
+/// Halved from 480 (2026-08-29) to pay for the tape going full-res
+/// (`WRITE-TAPE-SCALE` = 1.0): at 1080p RGBA16F that is ~3.98 GB for the single
+/// tape, which fits on a 12 GB card next to Resolume. The old half-res 480 was
+/// ~1.99 GB but cost ~0.35 round-trip gain at high spatial frequencies, which
+/// mushed tight fractal feedback into blobs within a few laps.
+const BUFFER_DEPTH: u32 = 240;
 
 /// The GPU ring buffer. Allocated lazily by the first recording Write. Stored at
-/// whatever (already Write-scaled, half-res) dimensions it is given.
+/// whatever (Write-scaled, now full-res) dimensions it is given.
 struct Buffer {
     texture_array: GLuint,
     width: u32,
@@ -110,7 +115,7 @@ pub extern "C" fn vc_release() {
 /// the new `record_index`. The Write records into `record_index mod vc_depth()`.
 ///
 /// NOT called while frozen (Write Send=0), so the cursor parks and the Read's loop
-/// window stays put. `width`/`height` are the Write-scaled (half-res) tape dims.
+/// window stays put. `width`/`height` are the Write-scaled (full-res) tape dims.
 #[no_mangle]
 pub extern "C" fn vc_write_tick(width: u32, height: u32, frame_id: u64) -> u64 {
     ensure_gl();
@@ -130,7 +135,7 @@ pub extern "C" fn vc_write_tick(width: u32, height: u32, frame_id: u64) -> u64 {
                 }
             }
             let tex = alloc_buffer(width, height);
-            // RGBA16F = 8 bytes/texel; width/height are the half-res tape dims.
+            // RGBA16F = 8 bytes/texel; width/height are the full-res tape dims.
             let vram_mb = (width as u64 * height as u64 * 8 * BUFFER_DEPTH as u64) / (1024 * 1024);
             tracing::info!(width, height, depth = BUFFER_DEPTH, vram_mb, "varispeed tape allocated");
             t.buffer = Some(Buffer { texture_array: tex, width, height });
@@ -181,8 +186,8 @@ pub extern "C" fn vc_tex() -> u32 {
 }
 
 /// Allocate a cleared RGBA16F 2D texture array of `BUFFER_DEPTH` layers (VS-STORAGE),
-/// or 0 on GL error. Float removes banding; the Write stores at half resolution so
-/// the full-depth tape stays ~1 GB. Mirrors delay-core's alloc. FBOs are NOT created
+/// or 0 on GL error. Float removes banding; the Write stores at full resolution, so
+/// the full-depth tape is ~3.98 GB at 1080p. Mirrors delay-core's alloc. FBOs are NOT created
 /// here — the plugins own their FBOs; only the texture name crosses the ABI.
 fn alloc_buffer(width: u32, height: u32) -> GLuint {
     unsafe {

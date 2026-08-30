@@ -48,8 +48,17 @@ const WARP_RATES: [(&str, f32); 5] = [
     ("1/16", 0.25),
 ];
 
-const MAX_LOOP_MS: f32 = 4000.0;
-const MAX_LOOP_FRAMES: u32 = 239;
+// Slider ranges only — the real cap is computed per mode at runtime from the
+// core's depth (varispeed-read/src/lib.rs): Reverse `depth/2`, Free/Confined
+// `depth-1`, then clamped in `loop_frames`. Reverse is the binding one, so this
+// tracks `BUFFER_DEPTH / 2` = 120 (two blocks of 120 tile the 240-layer ring
+// exactly). 120 frames = 2000 ms @60 fps, so the two maxima agree.
+//
+// NB: there is deliberately no `-1` here. The delay line's `BUFFER_DEPTH - 1` is
+// its N+1 stitch (read slot must not alias the write slot); varispeed's window is
+// bounded by the two-block Reverse layout instead, and `depth/2` is reachable.
+const MAX_LOOP_MS: f32 = 2000.0;
+const MAX_LOOP_FRAMES: u32 = 120;
 /// Max Doppler swing at Warp Depth = 1, in frames.
 const MAX_WARP_FRAMES: f32 = 30.0;
 

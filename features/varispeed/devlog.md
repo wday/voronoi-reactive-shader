@@ -125,3 +125,111 @@ All uncommitted.
 - Live validation of the Rate≠1 feedback cascade (`VsRd → FX → VsWr`) in Confined.
 - Live validation of Reverse mode (Stage 7): `Rate=-1x` reverse tail with no manual
   freeze, one-block latency, blocks swapping every `L`.
+
+## 2026-08-29 — Full-res tape (TAPE_SCALE 1.0) + BUFFER_DEPTH 480 → 240
+
+Live-use feedback: deep feedback loops "blur into blobs, which stops fractal
+generation". Varispeed Read/Write is what's actually being gigged now — the delay
+suite has been retired from the rig.
+
+### Diagnosis (spatial)
+
+Same architecture and same failure as the delay line. Each lap: full-res → 2x2 box
+downsample (`varispeed-write`, `TAPE_SCALE = 0.5`) → bilinear magnify on read. That
+round trip has gain ~1.0 at DC but only **~0.35 at mid-high spatial frequencies**,
+and 0 above the tape's Nyquist. Fine detail decays ~3x faster per lap than the
+image as a whole, so structure survives and texture doesn't. Fractal generation
+needs loop gain >= 1 in the band where the transform creates new detail.
+
+### Diagnosis (temporal) — varispeed-only, NOT fixed here
+
+`read.frag.glsl` also does `mix(b0, b1, u_frac)` between the two bracketing frames.
+That is required for smooth fractional playback (VS-INTERP), but in a feedback loop
+it is a **second lowpass**, and it is independent of tape resolution:
+
+| condition | `u_frac` | temporal blur |
+|---|---|---|
+| Rate ±1x, ±2x, Warp Depth 0 | always 0 | none |
+| Rate ±1/2x | alternates 0 / 0.5 | hard 2-frame average every other frame |
+| any Warp Depth > 0 | continuous | always on |
+
+So the blobbiest patches will be the Warp-driven and 1/2x ones, and full res alone
+won't rescue those. A Smooth/Nearest interp switch on the Read would (at the cost
+of judder) — logged as a candidate for `features/delay-lens/`.
+
+### The depth trade
+
+`BUFFER_DEPTH = 480` was never loop length — `MAX_LOOP_FRAMES` was already 239. The
+480 exists so Reverse (ping-pong) can hold two full blocks at once. So depth has to
+stay ≈ `2 * MAX_LOOP_FRAMES`, and going full-res at 480 would be 7.96 GB at
+1080p — too much beside Resolume on a 12 GB card.
+
+Single tape at 1920x1080, RGBA16F (8 B/texel):
+
+| tape | depth | max loop | VRAM |
+|---|---|---|---|
+| half (was) | 480 | 239 fr / 4 s | 1.99 GB |
+| **full (now)** | **240** | **120 fr / 2 s** | **3.98 GB** |
+
+User ruling: take the 2 s max loop. Actual use is 1/16..1/4 note (or 2-3 frames for
+tight feedback) at 1080p/60, which tops out near 60 frames at 60 BPM — 2x headroom.
+
+### Implemented
+- **varispeed-core**: `BUFFER_DEPTH` 480 → 240, with the `2 * MAX_LOOP_FRAMES`
+  invariant written down at the const so Reverse doesn't silently break if either
+  moves later. Half-res doc references corrected.
+- **varispeed-write**: `TAPE_SCALE` 0.5 → 1.0. Constant only — the sizing math,
+  viewport and `vc_write_tick` dims all key off it, and the core takes whatever
+  dims it is handed.
+- **varispeed-read**: `MAX_LOOP_MS` 4000 → 2000, `MAX_LOOP_FRAMES` 239 → 120, noted
+  as tracking the core's depth. `read.frag.glsl` comment corrected (the read is now
+  a 1:1 fetch, no spatial upscale).
+
+### Verification
+- `cargo test -p varispeed-dsp`: 23/23 pass. Its `480` literals are test-local
+  depths passed to `sample_block`, not tied to `BUFFER_DEPTH`.
+- All three DLLs built clean on MSVC.
+- **Deploy blocked** — Resolume open, holding the DLLs. All three must go together:
+  core at depth 240 with a Read still allowing a 239-frame loop would break the
+  two-block Reverse invariant. Close Resolume, then
+  `make deploy PLUGIN=varispeed_core` (and `varispeed_write`, `varispeed_read`).
+
+### Watch on first play
+The downscale was also providing free anti-aliasing. At full res, 2-3 frame loops
+may shimmer more. Don't revert for that — it's what the Bloom side of the Delay
+Lens Focus knob is for.
+
+### 2026-08-29 (same day) — corrected an off-by-one I introduced
+
+Shipped `MAX_LOOP_FRAMES = 119`, caught on review. Wrong: 119 was me preserving
+the old `239 = 240 - 1` arithmetic instead of re-deriving the constraint.
+
+The delay line's `BUFFER_DEPTH - 1` is a genuine N+1 stitch — `buf_size =
+loop_length + 1`, the read slot must not alias the slot the writer owns. Varispeed
+has no such rule. Its caps are computed per mode at runtime in
+`varispeed-read/src/lib.rs:162-165` (`Reverse => depth/2`, `_ => depth-1`) and
+clamped in `loop_frames`; `MAX_LOOP_FRAMES` is only the slider's declared range.
+Reverse is the binding case and `depth/2 = 120` is reachable — two 120-frame blocks
+tile the 240-layer ring exactly.
+
+The old 239 was inherited from the delay's convention and, at depth 480, happened
+to sit one below Reverse's cap of 240, so nothing ever surfaced it. Second tell
+missed at the time: 120 frames @60 fps is exactly 2000 ms, so `MAX_LOOP_MS = 2000`
+with `MAX_LOOP_FRAMES = 119` disagreed — Ms mode would ask for 120 and get 119.
+
+Now `MAX_LOOP_FRAMES = 120`, with the no-`-1` reasoning written at the constant so
+it doesn't get "corrected" back. varispeed-core's comment fixed to
+`2 * MAX_LOOP_FRAMES`.
+
+### 2026-08-30 — first live impression of the full-res tape
+
+Warp reads completely differently. With the half-res tape the Doppler smear was
+competing with the per-lap spatial blur and mostly lost; at full res the spatial
+detail survives the lap, so the temporal `mix()` between bracketing frames now
+shows up as a distinct, legible doppler rather than mush. User: "warp is insane
+with deep feedback loops, the doppler is so apparent."
+
+Bears directly on the deferred Smooth/Nearest interp switch: the temporal blend
+was logged as a *second lowpass to fix*, but with the spatial loss removed it
+reads as the effect doing its job. Keep the switch on the list as an option for
+crunchier reads, not as a defect. Re-evaluate after more time on it.

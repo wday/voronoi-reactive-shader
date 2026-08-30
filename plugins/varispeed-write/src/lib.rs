@@ -11,8 +11,8 @@
 //! tick entirely, so the cursor parks and the buffer is held — the Read then loops
 //! the captured window (varispeed playback). This is NOT the delay's Send=0 wipe.
 //!
-//! The tape is stored at half resolution (`TAPE_SCALE`) + RGBA16F (VS-STORAGE); the
-//! passthrough output stays full-res.
+//! The tape is stored at full resolution (`TAPE_SCALE` = 1.0) + RGBA16F
+//! (VS-STORAGE); the passthrough output is full-res too.
 
 mod params;
 mod shader;
@@ -26,9 +26,20 @@ use params::{WriteParams, NUM_PARAMS};
 use pluglib::vc_api;
 use shader::WriteShaders;
 
-/// Linear resolution scale for the stored tape (half width/height = a quarter of
-/// the pixels), so the RGBA16F tape stays affordable (VS-STORAGE / WRITE-TAPE-SCALE).
-const TAPE_SCALE: f32 = 0.5;
+/// Linear resolution scale for the stored tape. 1.0 = stored at the full frame
+/// resolution, so nothing in the loop is spatially resampled.
+///
+/// Was 0.5 (a quarter of the pixels) to keep the 480-layer tape near 2 GB. The
+/// cost only showed up in feedback: that downscale plus the Read's bilinear
+/// magnify gave the loop a round-trip gain of roughly 0.35 at high spatial
+/// frequencies, so fine detail decayed ~3x faster per lap than the image as a
+/// whole and tight fractal feedback mushed into blobs. Paid for by halving
+/// `BUFFER_DEPTH` to 240 (VS-STORAGE / WRITE-TAPE-SCALE).
+///
+/// NOTE: this only removes the *spatial* per-lap loss. `read.frag.glsl` also does
+/// a temporal `mix()` between bracketing frames, which is a second lowpass
+/// whenever the read head sits between frames (Rate ±1/2x, or any Warp Depth > 0).
+const TAPE_SCALE: f32 = 1.0;
 
 /// Host-provided per-frame id for the write-cursor barrier: host_time as whole ms.
 fn frame_id(data: &FFGLData) -> u64 {
@@ -68,8 +79,8 @@ impl VarispeedWrite {
         // record cursor parks and the buffer is kept — that IS the freeze (the Read
         // then loops the captured window).
         if send > 0.0 {
-            // Tape stored at reduced resolution (half-res RGBA16F). Downscale the
-            // sizing dims; varispeed-core allocs the tape at exactly these.
+            // Tape stored at full resolution (TAPE_SCALE = 1.0) RGBA16F; these are
+            // the sizing dims varispeed-core allocs the tape at exactly.
             let tape_w = ((width as f32 * TAPE_SCALE).round() as u32).max(1);
             let tape_h = ((height as f32 * TAPE_SCALE).round() as u32).max(1);
             let fid = frame_id(data);
