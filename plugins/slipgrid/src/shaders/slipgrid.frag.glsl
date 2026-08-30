@@ -181,7 +181,19 @@ void main() {
         }
     }
 
-    vec2 src = (ti + local) / u_grid;
+    // Snap the tile hop to a WHOLE number of content texels. The hop is
+    // (ti_new - ti_home)/u_grid, which is only an integer texel count when the
+    // grid divides the frame — grid 8 into 1920 is 240px exactly, grid 7 is
+    // 274.3px, and then every hop lands at a fractional texel offset and bilinear
+    // resamples the tile. That made the "pixel-exact copy" above false for most
+    // grid values, and inside a feedback loop the resample compounds once per lap
+    // into real blur. Snapping restores an exact copy for ANY grid: a whole-texel
+    // fetch has zero loss, which beats any interpolation filter. Costs at most
+    // half a texel of tile-boundary placement, which is invisible.
+    vec2 content_texel = u_texel / u_uv_scale;              // one source texel, in uv
+    vec2 hop = (ti - floor(tf)) / u_grid;                   // tile hop, in uv
+    hop = round(hop / content_texel) * content_texel;       // -> whole texels
+    vec2 src = v_uv + hop;
     vec4 slipped = sampleContent(src);
 
     out_color = mix(original, slipped, u_dry_wet);

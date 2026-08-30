@@ -106,3 +106,45 @@ right bias. Dropped the FBOs; the atom stays a stateless single pass.
 
 Built clean (MSVC) and deployed to Resolume Extra Effects. **Not yet driven with
 live footage** — the accretion numbers are all from synthetic test images.
+
+## 2026-08-30 — Snap tile hops to whole texels
+
+Found during a sweep for the resample bug fixed in `mirror-transform` the same day.
+
+The shader carries `local = fract(v_uv * u_grid)` through untouched and rebuilds
+the source coordinate as `(ti_new + local) / u_grid`, with the comment "a displaced
+tile is a pixel-exact copy of its source". **That was only true when the grid
+divides the frame.** The hop is `(ti_new - ti_home)/u_grid`, an integer number of
+texels only if the tile size in pixels is an integer — grid 8 into 1920 is 240px
+exactly, grid 7 is 274.3px. At any non-divisor grid every hop lands at a fractional
+texel offset and bilinear resamples the whole tile.
+
+Harmless as a one-shot effect (a half-texel softening nobody would notice). Not
+harmless in a feedback loop, where the resample is applied once per lap and
+compounds — the same mechanism that was blurring out zoom tunnels.
+
+### Fix: snap, don't filter
+```glsl
+vec2 content_texel = u_texel / u_uv_scale;        // one source texel, in uv
+vec2 hop = (ti - floor(tf)) / u_grid;
+hop = round(hop / content_texel) * content_texel; // -> whole texels
+vec2 src = v_uv + hop;
+```
+A whole-texel fetch has **zero** loss, which beats any interpolation filter — so
+this is strictly better here than the Catmull-Rom used in `mirror-transform` and
+`channel-displace`, where the offsets are genuinely continuous and can't be snapped.
+Costs at most half a texel of tile-boundary placement, which is invisible.
+
+### Measured (headless, 256x256 uniform noise, grid 7 — deliberately a non-divisor)
+Fraction of output pixels that are *exactly* some source pixel (an interpolated
+pixel essentially never matches one exactly on random content):
+
+| | exact source pixels |
+|---|---|
+| before | 2.5% |
+| after | **100%** |
+
+So the permutation is now genuinely lossless for any grid value, and the docstring's
+claim is true for the first time.
+
+Built, deployed. Shader compile-checked headlessly before deploy.
