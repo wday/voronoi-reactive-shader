@@ -233,3 +233,51 @@ Bears directly on the deferred Smooth/Nearest interp switch: the temporal blend
 was logged as a *second lowpass to fix*, but with the spatial loss removed it
 reads as the effect doing its job. Keep the switch on the list as an option for
 crunchier reads, not as a defect. Re-evaluate after more time on it.
+
+## 2026-08-30 — Catmull-Rom temporal interpolation (VS-INTERP upgrade)
+
+Follow-on from the full-res tape. Two motivations converged:
+
+1. **Judder.** Fractional Rate read jerky where Frames-mode-at-1x looked smooth.
+2. **The temporal lowpass.** Linear `mix(b0, b1, frac)` is a pure two-tap average,
+   so at fractional rates it softened the loop on *every lap* — the second blur
+   flagged when the spatial one was removed, active whenever Rate is fractional or
+   Warp Depth > 0.
+
+Cubic addresses both at once: Catmull-Rom is smoother between frames *and* has a
+mild sharpening lobe where linear only averages. That is why it was chosen over
+the seam crossfade, which only removes a periodic artifact.
+
+### Implemented
+- **varispeed-dsp**: `Sample` grows from `{layer0, layer1, frac}` to
+  `{prev, layer0, layer1, next, frac}`. `layer0`/`layer1` keep their exact former
+  meaning, so every pre-existing test still asserts the same thing. All three
+  samplers updated — `sample_age` (age space: `prev` is age0-1, the *newer*
+  neighbour), `sample_confined`, `sample_block` — each wrapping all four taps
+  inside its own window/block via `rem_euclid`.
+- **read.frag.glsl**: `catmull(p0,p1,p2,p3,t)`, result clamped to [0,1] because the
+  tape stores encoded values and overshoot would recirculate round the loop.
+- **shader.rs**: four scalar uniforms, **not** a `float[4]`. `uniform_loc` returns
+  `glGetUniformLocation` raw (-1 on a miss) and `glUniform*(-1, ...)` is a silent
+  no-op, so an array-name mismatch on some driver would have frozen the read on
+  layer 0 with no error. Rust side still takes `[f32; 4]`.
+
+### Properties worth knowing
+- **Integer rates are unchanged.** At `frac == 0` Catmull-Rom returns `p1` exactly,
+  so Rate ±1x/±2x with Warp 0 is bit-identical to before. Only fractional reads move.
+- **The seam gets slightly wider.** The outer taps wrap like `layer1` always has, so
+  at the seam they pull from the opposite end of the window: the discontinuity now
+  spans two frames each side instead of one. Accepted — seam crossfade is still
+  deferred and is the proper fix.
+- **Does not rescue very short loops.** At `len = 3` there are only three distinct
+  images; four taps have nothing to work with and the seam is a third of the window.
+  Rate ≠ 1 wants 20-60 frames. That judder is content starvation, not filter quality.
+
+### Verification
+- `cargo test -p varispeed-dsp`: **28/28** (23 pre-existing + 5 new covering the
+  four-tap layout, seam wrap in age space, backward wrap at window/block start, and
+  the degenerate `len = 1` case where all four taps alias).
+- `varispeed_read` built clean on MSVC; new shader source confirmed present in the
+  DLL. GLSL only compiles at runtime in Resolume, so a shader error would surface
+  as a black or frozen read — worth a look on first load.
+- **Deploy blocked** (Resolume open). `make deploy PLUGIN=varispeed_read`.

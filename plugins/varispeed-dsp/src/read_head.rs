@@ -12,12 +12,25 @@
 //!   - frozen (dr=0), rate=r ⇒ age moves at `-r` ⇒ the captured loop plays at r
 //!     (reverse if r<0, freeze-frame if r=0), wrapping every `len`.
 
-/// Two ring layers to fetch + the linear blend weight between them:
-/// `out = mix(layer0, layer1, frac)` (VS-INTERP).
+/// Four ring layers to fetch + the blend weight, for a Catmull-Rom cubic across
+/// the read position (VS-INTERP): `out = catmull(prev, layer0, layer1, next, frac)`.
+///
+/// `layer0`/`layer1` bracket the read position exactly as they did under the old
+/// linear `mix`; `prev` is one step before `layer0` and `next` one step after
+/// `layer1`, both wrapped inside the loop window. At `frac == 0` a Catmull-Rom
+/// returns `layer0` exactly, so integer reads (Rate +/-1x, +/-2x with no Warp) are
+/// bit-identical to the linear version — only fractional reads change.
+///
+/// The outer taps wrap within the window like `layer1` always has, so at the seam
+/// they pull from the opposite end. That widens the existing seam discontinuity
+/// from one frame to two on each side; smoothing it is the deferred seam
+/// crossfade, tracked separately.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sample {
+    pub prev: u32,
     pub layer0: u32,
     pub layer1: u32,
+    pub next: u32,
     pub frac: f32,
 }
 
@@ -46,13 +59,25 @@ pub fn sample_age(record_index: u64, age: f64, warp: f64, len: u32, depth: u32) 
     let e = (age - warp).rem_euclid(len as f64);
     let a0 = e.floor();
     let frac = (e - a0) as f32;
+    // Four consecutive ages for the cubic. Higher age = older, so `prev` (age0 - 1)
+    // is the NEWER neighbour and `next` (age0 + 2) the older one. All wrap mod len
+    // at the seam, like age1 always has.
+    let l = len as i128;
+    let age_prev = (a0 as i128 - 1).rem_euclid(l);
     let age0 = a0 as i128;
-    let age1 = (a0 as i128 + 1) % len as i128; // wrap oldest→newest at the seam
+    let age1 = (a0 as i128 + 1).rem_euclid(l); // wrap oldest→newest at the seam
+    let age_next = (a0 as i128 + 2).rem_euclid(l);
     // Frame at age `a` lives in ring layer (record_index - a) mod depth. i128 keeps
     // the subtraction well-defined before the ring has filled (early frames read
     // cleared/black slots — the warm-up, as in the delay line).
     let layer = |a: i128| ((record_index as i128 - a).rem_euclid(depth as i128)) as u32;
-    Sample { layer0: layer(age0), layer1: layer(age1), frac }
+    Sample {
+        prev: layer(age_prev),
+        layer0: layer(age0),
+        layer1: layer(age1),
+        next: layer(age_next),
+        frac,
+    }
 }
 
 /// Advance the confined-loop play head by `rate` frames, wrapped into `[0, len)`.
@@ -63,8 +88,8 @@ pub fn advance_head(head: f64, rate: f64, len: u32) -> f64 {
 }
 
 /// Confined-loop read (Confine mode): a FIXED window of `len` slots at ring layers
-/// `[0, len)`, sampled at float position `pos` (wraps mod len) with linear
-/// interpolation across the seam. The Write records back into `floor(head)` of this
+/// `[0, len)`, sampled at float position `pos` (wraps mod len) with cubic
+/// (Catmull-Rom) interpolation, wrapping across the seam. The Write records back into `floor(head)` of this
 /// same window, so feedback recirculates in place and accumulates (like the delay's
 /// sustain) instead of marching across the full ring — no ring-lap reset.
 pub fn sample_confined(pos: f64, len: u32, depth: u32) -> Sample {
@@ -73,9 +98,10 @@ pub fn sample_confined(pos: f64, len: u32, depth: u32) -> Sample {
     let w = pos.rem_euclid(len as f64);
     let i0 = w.floor();
     let frac = (w - i0) as f32;
-    let l0 = (i0 as u32) % len;
-    let l1 = (l0 + 1) % len;
-    Sample { layer0: l0 % depth, layer1: l1 % depth, frac }
+    let i = i0 as i64;
+    let n = len as i64;
+    let slot = |k: i64| ((i + k).rem_euclid(n) as u32) % depth;
+    Sample { prev: slot(-1), layer0: slot(0), layer1: slot(1), next: slot(2), frac }
 }
 
 /// The integer slot the confined play head sits on — the slot the Write records
@@ -85,8 +111,8 @@ pub fn confined_slot(head: f64, len: u32) -> u32 {
 }
 
 /// Sample a `len`-slot block that starts at ring layer `base` (Reverse / ping-pong
-/// mode). Reads float position `pos` (wraps mod `len`) with linear interpolation
-/// across the seam, exactly like [`sample_confined`] but offset to `[base, base+len)`
+/// mode). Reads float position `pos` (wraps mod `len`) with cubic interpolation,
+/// wrapping across the seam, exactly like [`sample_confined`] but offset to `[base, base+len)`
 /// instead of `[0, len)` — so the two ping-pong blocks live at bases `0` and `len`.
 /// The play head honours Rate (reverse/fwd/fast/slow) while the Write records the
 /// live signal forward into the *other* block.
@@ -96,14 +122,81 @@ pub fn sample_block(base: u32, pos: f64, len: u32, depth: u32) -> Sample {
     let w = pos.rem_euclid(len as f64);
     let i0 = w.floor();
     let frac = (w - i0) as f32;
-    let l0 = (base + i0 as u32) % depth;
-    let l1 = (base + ((i0 as u32 + 1) % len)) % depth; // wrap within the block
-    Sample { layer0: l0, layer1: l1, frac }
+    let i = i0 as i64;
+    let n = len as i64;
+    // Wrap within the block, then offset to the block's base layer.
+    let slot = |k: i64| (base + (i + k).rem_euclid(n) as u32) % depth;
+    Sample { prev: slot(-1), layer0: slot(0), layer1: slot(1), next: slot(2), frac }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cubic_taps_are_four_consecutive_ages() {
+        // age 2.25 in an 8-frame window: taps at ages 1,2,3,4 (prev is NEWER).
+        // Frame at age a lives at layer (record_index - a).
+        let s = sample_age(100, 2.25, 0.0, 8, 240);
+        assert_eq!(s.prev, 99); // age 1
+        assert_eq!(s.layer0, 98); // age 2
+        assert_eq!(s.layer1, 97); // age 3
+        assert_eq!(s.next, 96); // age 4
+        assert!((s.frac - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cubic_outer_taps_wrap_at_the_seam() {
+        // age 7.5 in an 8-frame window straddles the seam: layer1 wraps back to the
+        // newest frame and `next` follows it, so the cubic never reads outside the
+        // window (which would be a different loop's content).
+        let s = sample_age(100, 7.5, 0.0, 8, 240);
+        assert_eq!(s.prev, 94); // age 6
+        assert_eq!(s.layer0, 93); // age 7 — oldest
+        assert_eq!(s.layer1, 100); // age 0 — wrapped to newest
+        assert_eq!(s.next, 99); // age 1
+    }
+
+    #[test]
+    fn confined_cubic_taps_wrap_within_window() {
+        // Forward wrap at the top of the window.
+        let s = sample_confined(7.5, 8, 240);
+        assert_eq!(s.prev, 6);
+        assert_eq!(s.layer0, 7);
+        assert_eq!(s.layer1, 0);
+        assert_eq!(s.next, 1);
+        // Backward wrap at the bottom: prev must come from the window END, never
+        // from layer -1 (which would land outside the confined window).
+        let s = sample_confined(0.5, 8, 240);
+        assert_eq!(s.prev, 7);
+        assert_eq!(s.layer0, 0);
+        assert_eq!(s.layer1, 1);
+        assert_eq!(s.next, 2);
+    }
+
+    #[test]
+    fn block_cubic_taps_wrap_within_block_not_ring() {
+        // Block of 8 at base 8: every tap stays inside [8, 16).
+        let s = sample_block(8, 7.5, 8, 480);
+        assert_eq!(s.prev, 14);
+        assert_eq!(s.layer0, 15);
+        assert_eq!(s.layer1, 8); // wraps to block start, not to ring layer 16
+        assert_eq!(s.next, 9);
+        let s = sample_block(8, 0.5, 8, 480);
+        assert_eq!(s.prev, 15); // wraps to block end, not to ring layer 7
+        assert_eq!(s.layer0, 8);
+        assert_eq!(s.layer1, 9);
+        assert_eq!(s.next, 10);
+    }
+
+    #[test]
+    fn degenerate_window_aliases_every_tap() {
+        // len 1: nothing to interpolate; all four taps collapse onto the one frame
+        // and frac is 0, so the cubic returns it exactly.
+        let s = sample_confined(0.0, 1, 240);
+        assert_eq!((s.prev, s.layer0, s.layer1, s.next), (0, 0, 0, 0));
+        assert!(s.frac.abs() < 1e-6);
+    }
 
     #[test]
     fn confined_window_maps_to_low_layers() {

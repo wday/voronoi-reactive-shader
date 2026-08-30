@@ -139,8 +139,20 @@ Split across the two modules. No Channel param (single tape, §1).
 - **VS-RING** — Playback SHALL address a fixed-depth ring (`write_slot =
   frame_index mod N`); the read SHALL be a float `read_pos` independent of the
   write. Changing Rate/Loop Length SHALL NOT reseed or reallocate the tape.
-- **VS-INTERP** — A fractional `read_pos` SHALL return a linear blend of the two
-  bracketing frame layers.
+- **VS-INTERP** — A fractional `read_pos` SHALL return a **Catmull-Rom cubic**
+  across four consecutive frame layers: the two bracketing the position, plus one
+  either side to shape the curve. All four wrap inside the loop window. At
+  `frac == 0` the cubic returns the `layer0` frame exactly, so integer reads
+  (Rate ±1x, ±2x with Warp Depth 0) are bit-identical to a direct fetch.
+
+  > **Amended 2026-08-30.** Was a linear blend of the two bracketing layers.
+  > Upgraded because linear `mix()` is a pure two-tap average, so at fractional
+  > rates it low-passed the loop a little on *every lap* — a second per-lap blur
+  > alongside the (now removed) half-res spatial one, active whenever Rate is
+  > fractional or Warp Depth > 0. The cubic is both smoother between frames and
+  > slightly sharper, so it addresses the judder and the detail loss together.
+  > Overshoot is clamped to [0,1] in the shader: the tape stores encoded values
+  > and out-of-range results would otherwise recirculate. See `devlog.md`.
 - **VS-LOOP-WINDOW** — Loop Length `L` SHALL define the read wrap window
   (`1 ≤ L ≤ N`), independent of `N` and of the write. Verifiable: a frozen
   `L`-frame loop played at `Rate` repeats with period `L / |Rate|` output frames.

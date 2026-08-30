@@ -242,9 +242,15 @@ impl VarispeedRead {
 
         if tex == 0 || depth == 0 {
             // No tape yet: pass the live source through (Wet forced to 0).
-            shaders.draw(input_tex, uv_scale, 0, 0.0, 0.0, 0.0, dry, 0.0, gamma);
+            shaders.draw(input_tex, uv_scale, 0, [0.0; 4], 0.0, dry, 0.0, gamma);
         } else {
-            shaders.draw(input_tex, uv_scale, tex, sample.layer0 as f32, sample.layer1 as f32, sample.frac, dry, wet, gamma);
+            let layers = [
+                sample.prev as f32,
+                sample.layer0 as f32,
+                sample.layer1 as f32,
+                sample.next as f32,
+            ];
+            shaders.draw(input_tex, uv_scale, tex, layers, sample.frac, dry, wet, gamma);
         }
     }
 }
