@@ -63,12 +63,16 @@ Length a real knob in Free mode.
 - **`cargo build`** — `varispeed-core`, `delay-core`, `pluglib` clean on Linux.
 - **Windows MSVC release build** — all three DLLs clean, no crate warnings.
   `varispeed_core.dll` exports all nine `vc_*` including the new `vc_channels`.
+- **Deployed** — `varispeed_core.dll`, `varispeed_read.dll`, `varispeed_write.dll`
+  copied into Resolume's Extra Effects directory. The core DLL must sit beside the
+  two plugins: they runtime-load it from their own directory so both bind ONE copy.
 
 ## Unverified
 
-Everything below needs Resolume; deploy is blocked while it holds the DLLs.
+Everything below needs Resolume. All three DLLs are **deployed** to
+`Documents/Resolume Avenue/Extra Effects/`; nothing has been run yet.
 
-- **Nothing in this change has run in Resolume.** Deploy blocked (see plan.md).
+- **Nothing in this change has run in Resolume.**
 - Whether Resolume picks up the new param lists or has cached them by `unique_id`
   (fallback: bump `VsRd`/`VsWr` -> `VsR2`/`VsW2`).
 - Live behaviour of every VS-* requirement: round trip on the quarter note, N Free

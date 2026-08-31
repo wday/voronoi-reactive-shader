@@ -1,23 +1,11 @@
 # Varispeed — Plan
 
-Remaining work for the v0.2 contraction. Code is landed and builds clean on MSVC;
-what is left is getting it into Resolume and playing it. Delete steps as they land.
+Remaining work for the v0.2 contraction. Code is landed, built and deployed to
+Resolume's Extra Effects; what is left is playing it. Delete steps as they land.
 
 ---
 
-## Step 1 — Deploy
-DLLs are built and staged in `/mnt/c/Users/alien/.cargo-target/ffgl-rs/release/`.
-**Close Resolume** (it holds the DLLs locked), then:
-```
-make deploy PLUGIN=varispeed_core
-make deploy PLUGIN=varispeed_read
-make deploy PLUGIN=varispeed_write
-```
-If Resolume then shows the **old** param list it has cached by `unique_id`: bump
-`VsRd`/`VsWr` -> `VsR2`/`VsW2` and redeploy. Not done pre-emptively, because it
-breaks existing patches' param mappings.
-
-## Step 2 — Live validation in Resolume
+## Step 1 — Live validation in Resolume
 Existing patches need re-making regardless (loop max 2 s -> 1 s, Confine encoding
 remapped, param indices shifted).
 - **VS-ROUNDTRIP:** Free, `Rate = 1x`, `Loop = 1/4`. Content must recirculate on the
@@ -30,3 +18,8 @@ remapped, param indices shifted).
 - **VS-CONFINED-STABLE:** Confined, `Rate = 1/2x`, recording — accumulates without
   the runaway cascade.
 - **VRAM:** confirm ~1.9 GB with both channels live (was ~4 GB for one tape).
+
+If Resolume shows the **old** param list (no Channel, a Reverse option, a 2000 ms
+loop max), it has cached the plugin by `unique_id`: bump `VsRd`/`VsWr` ->
+`VsR2`/`VsW2` in each crate's `plugin_info()`, rebuild and redeploy. Not done
+pre-emptively because it breaks existing patches' param mappings.
