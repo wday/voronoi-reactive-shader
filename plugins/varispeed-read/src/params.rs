@@ -3,18 +3,19 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 11;
-pub const PARAM_SYNC_MODE: usize = 0;
-pub const PARAM_SUBDIVISION: usize = 1;
-pub const PARAM_LOOP_MS: usize = 2;
-pub const PARAM_LOOP_FRAMES: usize = 3;
-pub const PARAM_RATE: usize = 4;
-pub const PARAM_DRY: usize = 5;
-pub const PARAM_WET: usize = 6;
-pub const PARAM_BLEND: usize = 7;
-pub const PARAM_WARP_DEPTH: usize = 8;
-pub const PARAM_WARP_RATE: usize = 9;
-pub const PARAM_CONFINE: usize = 10;
+pub const NUM_PARAMS: usize = 12;
+pub const PARAM_CHANNEL: usize = 0;
+pub const PARAM_SYNC_MODE: usize = 1;
+pub const PARAM_SUBDIVISION: usize = 2;
+pub const PARAM_LOOP_MS: usize = 3;
+pub const PARAM_LOOP_FRAMES: usize = 4;
+pub const PARAM_RATE: usize = 5;
+pub const PARAM_DRY: usize = 6;
+pub const PARAM_WET: usize = 7;
+pub const PARAM_BLEND: usize = 8;
+pub const PARAM_WARP_DEPTH: usize = 9;
+pub const PARAM_WARP_RATE: usize = 10;
+pub const PARAM_LOOP_MODE: usize = 11;
 
 /// Loop-length subdivision options: (label, beats).
 const SUBDIVISIONS: [(&str, f32); 7] = [
@@ -48,17 +49,15 @@ const WARP_RATES: [(&str, f32); 5] = [
     ("1/16", 0.25),
 ];
 
-// Slider ranges only — the real cap is computed per mode at runtime from the
-// core's depth (varispeed-read/src/lib.rs): Reverse `depth/2`, Free/Confined
-// `depth-1`, then clamped in `loop_frames`. Reverse is the binding one, so this
-// tracks `BUFFER_DEPTH / 2` = 120 (two blocks of 120 tile the 240-layer ring
-// exactly). 120 frames = 2000 ms @60 fps, so the two maxima agree.
+// Slider ranges only — the real cap is `depth - 1` computed at runtime from the
+// core's depth (varispeed-read/src/lib.rs) and clamped in `loop_frames`. Tracks
+// `BUFFER_DEPTH - 1` = 60, the N+1 stitch (VS-CAPACITY): at the deepest tap the
+// read layer and the layer the Write is about to fill stay distinct.
 //
-// NB: there is deliberately no `-1` here. The delay line's `BUFFER_DEPTH - 1` is
-// its N+1 stitch (read slot must not alias the write slot); varispeed's window is
-// bounded by the two-block Reverse layout instead, and `depth/2` is reachable.
-const MAX_LOOP_MS: f32 = 2000.0;
-const MAX_LOOP_FRAMES: u32 = 120;
+// 60 frames = 1000 ms @60 fps, so the two maxima agree. Varispeed is the
+// short-loop fractal box; long delay is DlyT/DlyW's job.
+const MAX_LOOP_MS: f32 = 1000.0;
+const MAX_LOOP_FRAMES: u32 = 60;
 /// Max Doppler swing at Warp Depth = 1, in frames.
 const MAX_WARP_FRAMES: f32 = 30.0;
 
@@ -72,7 +71,20 @@ fn option_elements<const N: usize>(items: &[(&str, f32); N]) -> Vec<(CString, f3
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [
-        // 0: Sync Mode — how Loop Length is specified.
+        // 0: Channel — the patch point. Read + Write on the same Channel form a
+        //    loop over one tape. Two channels = two independent feedback networks,
+        //    each with its own in-loop FX stack (VS-CHANNELS).
+        SimpleParamInfo {
+            name: CString::new("Channel").unwrap(),
+            param_type: ParameterTypes::Option,
+            default: Some(0.0),
+            elements: Some(vec![
+                (CString::new("1").unwrap(), 0.0),
+                (CString::new("2").unwrap(), 1.0),
+            ]),
+            ..Default::default()
+        },
+        // 1: Sync Mode — how Loop Length is specified.
         SimpleParamInfo {
             name: CString::new("Sync Mode").unwrap(),
             param_type: ParameterTypes::Option,
@@ -84,7 +96,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ]),
             ..Default::default()
         },
-        // 1: Subdivision (Loop Length in beats).
+        // 2: Subdivision (Loop Length in beats).
         SimpleParamInfo {
             name: CString::new("Subdivision").unwrap(),
             param_type: ParameterTypes::Option,
@@ -92,7 +104,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             elements: Some(option_elements(&SUBDIVISIONS)),
             ..Default::default()
         },
-        // 2: Loop Ms.
+        // 3: Loop Ms.
         SimpleParamInfo {
             name: CString::new("Loop Ms").unwrap(),
             param_type: ParameterTypes::Integer,
@@ -101,7 +113,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             max: Some(MAX_LOOP_MS),
             ..Default::default()
         },
-        // 3: Loop Frames.
+        // 4: Loop Frames.
         SimpleParamInfo {
             name: CString::new("Loop Frames").unwrap(),
             param_type: ParameterTypes::Integer,
@@ -110,7 +122,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             max: Some(MAX_LOOP_FRAMES as f32),
             ..Default::default()
         },
-        // 4: Rate — playback speed/direction (beat-ratio). Freeze=freeze-frame,
+        // 5: Rate — playback speed/direction (beat-ratio). Freeze=freeze-frame,
         //    negatives=reverse. Independent of the Write's Send=0 loop-freeze.
         SimpleParamInfo {
             name: CString::new("Rate").unwrap(),
@@ -119,21 +131,21 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             elements: Some(option_elements(&RATES)),
             ..Default::default()
         },
-        // 5: Dry — gain on the live source into the FX chain.
+        // 6: Dry — gain on the live source into the FX chain.
         SimpleParamInfo {
             name: CString::new("Dry").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(1.0),
             ..Default::default()
         },
-        // 6: Wet — gain on the played-back loop.
+        // 7: Wet — gain on the played-back loop.
         SimpleParamInfo {
             name: CString::new("Wet").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(0.5),
             ..Default::default()
         },
-        // 7: Blend Space — Linear (default) or Perceptual, as Delay Tap.
+        // 8: Blend Space — Linear (default) or Perceptual, as Delay Tap.
         SimpleParamInfo {
             name: CString::new("Blend Space").unwrap(),
             param_type: ParameterTypes::Option,
@@ -144,14 +156,14 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             ]),
             ..Default::default()
         },
-        // 8: Warp Depth — Doppler swing (0 = off).
+        // 9: Warp Depth — Doppler swing (0 = off).
         SimpleParamInfo {
             name: CString::new("Warp Depth").unwrap(),
             param_type: ParameterTypes::Standard,
             default: Some(0.0),
             ..Default::default()
         },
-        // 9: Warp Rate — Doppler LFO period (beat-synced, bar-phase-locked).
+        // 10: Warp Rate — Doppler LFO period (beat-synced, bar-phase-locked).
         SimpleParamInfo {
             name: CString::new("Warp Rate").unwrap(),
             param_type: ParameterTypes::Option,
@@ -159,31 +171,29 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
             elements: Some(option_elements(&WARP_RATES)),
             ..Default::default()
         },
-        // 10: Confine — how the loop relates to the tape.
-        //     Confined (default): the read plays a FIXED [0, Loop] window and the
-        //     Write records the FX'd output back into the slot just read → feedback
-        //     recirculates in place at Send*Wet per lap, so loops decay (or, at
-        //     Send*Wet >= 1, sustain/overdub) at ANY Rate. No ring-lap reset.
-        //     Free: the read floats over the full ring anchored to the live write
-        //     cursor (free-floating varispeed scrub). Because the read and write
-        //     cursors drift apart at Rate != 1, feedback is NOT an in-place
-        //     Send*Wet decay there — old ring content replays until the write
-        //     cursor laps the whole tape. Use Free for scrub/playback.
-        //     Reverse (ping-pong block): two Loop-length blocks in the ring. One
-        //     records the live signal FORWARD (1x metronome) while the other is
-        //     frozen and played at Rate (-1x = classic reverse delay; the Rate knob
-        //     also gives reverse-fast/slow and forward block delay). The blocks
-        //     swap every Loop frames, so reverse feedback runs continuously WITHOUT
-        //     a manual freeze — at the inherent one-block latency. Feedback (a
-        //     decaying reversed tail) rides the normal Read->FX->Write chain.
+        // 11: Loop Mode — where the Write lands relative to the read head.
+        //     Both modes recirculate on exactly Loop Length frames at Rate 1x; they
+        //     differ in what Rate != 1 does.
+        //     Confined (default): the read plays a FIXED [0, Loop) window and the
+        //     Write records the FX'd output back into the slot just read. There is
+        //     no read/write rate mismatch, so ANY Rate accumulates in place at
+        //     Send*Wet per lap (decaying, or sustaining at Send*Wet >= 1) without
+        //     the compounding cascade. Never crosses the ring-lap seam. At most ONE
+        //     Confined Read per channel — they collide on the loop-slot handoff.
+        //     Free: the Write records at the moving cursor and the read floats
+        //     `age` frames behind it, seeded to Loop Length - 1 (VS-ANCHOR) so Loop
+        //     Length is the tap time. At Rate 1x that is a fixed Loop-length delay;
+        //     at Rate != 1 read and write rates disagree, which is the compounding
+        //     feedback cascade (experimental, unguarded). Free publishes nothing to
+        //     the tape, so N Free Reads share one channel as N independent taps
+        //     (VS-MULTITAP).
         SimpleParamInfo {
-            name: CString::new("Confine").unwrap(),
+            name: CString::new("Loop Mode").unwrap(),
             param_type: ParameterTypes::Option,
-            default: Some(0.5), // Confined — the in-place recirculating feedback path
+            default: Some(1.0), // Confined — the in-place recirculating feedback path
             elements: Some(vec![
                 (CString::new("Free").unwrap(), 0.0),
-                (CString::new("Confined").unwrap(), 0.5),
-                (CString::new("Reverse").unwrap(), 1.0),
+                (CString::new("Confined").unwrap(), 1.0),
             ]),
             ..Default::default()
         },
@@ -201,15 +211,14 @@ pub enum SyncMode {
     Frames,
 }
 
-/// How the read relates to the tape (Confine param). See the param-10 doc.
+/// Where the Write lands relative to the read head (Loop Mode param). See the
+/// param-11 doc.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LoopMode {
-    /// Free-floating full-ring scrub (age model).
+    /// Write at the moving cursor; the read floats `age` behind it (age model).
     Free,
     /// Fixed [0, Loop) window, in-place recirculating feedback.
     Confined,
-    /// Ping-pong block reverse: record-forward block + frozen block played at Rate.
-    Reverse,
 }
 
 /// Pick the nearest option index for an Option value encoded as `i/(n-1)`.
@@ -225,6 +234,7 @@ impl ReadParams {
     pub fn new() -> Self {
         Self {
             values: [
+                0.0,       // Channel: 1
                 0.0,       // Sync Mode: Subdivision
                 2.0 / 6.0, // Subdivision: 1/4
                 500.0,     // Loop Ms
@@ -235,7 +245,7 @@ impl ReadParams {
                 1.0,       // Blend Space: Linear
                 0.0,       // Warp Depth
                 2.0 / 4.0, // Warp Rate: 1/4
-                0.5,       // Confine: Confined (in-place decaying feedback, default)
+                1.0,       // Loop Mode: Confined (in-place decaying feedback, default)
             ],
         }
     }
@@ -252,6 +262,11 @@ impl ReadParams {
                 _ => value.clamp(0.0, 1.0),
             };
         }
+    }
+
+    /// Tape channel index. Read + Write on the same channel form a loop.
+    pub fn channel(&self) -> u32 {
+        if self.values[PARAM_CHANNEL] < 0.5 { 0 } else { 1 }
     }
 
     pub fn sync_mode(&self) -> SyncMode {
@@ -305,12 +320,15 @@ impl ReadParams {
         WARP_RATES[option_index(self.values[PARAM_WARP_RATE], WARP_RATES.len())].1
     }
 
-    /// Confine mode (Free / Confined / Reverse), nearest of the 3 options.
+    /// Loop mode (Free / Confined), nearest of the 2 options.
+    ///
+    /// The old 3-option encoding (Free 0.0 / Confined 0.5 / Reverse 1.0) migrates
+    /// sanely: 0.0 stays Free, and both 0.5 and 1.0 land on Confined.
     pub fn loop_mode(&self) -> LoopMode {
-        match option_index(self.values[PARAM_CONFINE], 3) {
-            0 => LoopMode::Free,
-            1 => LoopMode::Confined,
-            _ => LoopMode::Reverse,
+        if option_index(self.values[PARAM_LOOP_MODE], 2) == 0 {
+            LoopMode::Free
+        } else {
+            LoopMode::Confined
         }
     }
 }

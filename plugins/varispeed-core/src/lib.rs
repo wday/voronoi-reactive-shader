@@ -1,12 +1,19 @@
-//! varispeed-core — the shared GPU ring buffer + write-cursor barrier for the
-//! Varispeed atom, behind a C ABI. **Single tape** (no channels), **full-ring**
+//! varispeed-core — the shared GPU ring buffers + write-cursor barriers for the
+//! Varispeed atom, behind a C ABI. **Two channels** (VS-CHANNELS), **full-ring**
 //! topology, **full-res RGBA16F** storage (VS-STORAGE).
 //!
 //! Fully separate from `delay-core`: the shipped delay (`dc_*`) is never touched
 //! (VS-ISOLATION). Like delay-core, it is one owner across the two plugin DLLs
 //! (Varispeed Read + Write), which runtime-load it from their own directory so
-//! both bind ONE copy → one `static TAPE` and one lock. GL *objects* (the texture
-//! name) are shared via Resolume's shared GL context; only scalars cross the ABI.
+//! both bind ONE copy → one `static REGISTRY` and one lock. GL *objects* (the
+//! texture name) are shared via Resolume's shared GL context; only scalars cross
+//! the ABI.
+//!
+//! Every entry point takes a `channel` selecting one of `NUM_CHANNELS` independent
+//! tapes, so a Read/Write pair on channel 0 and another on channel 1 are two
+//! separate feedback networks. Channels allocate lazily on their first recording
+//! Write, so an unused channel costs no VRAM. An out-of-range channel is a no-op
+//! returning a zero value — never a panic across the C ABI.
 //!
 //! **Freeze for free.** The Write advances the write cursor `record_index` (and
 //! records a frame) via [`vc_write_tick`] ONLY while recording. Freezing (the
@@ -19,18 +26,24 @@
 use gl::types::*;
 use std::sync::{Mutex, Once};
 
-/// Ring depth (layers of the 2D texture array). Caps the max loop / capture
-/// window. 240 (4 s @60 fps) — kept at **twice** `MAX_LOOP_FRAMES` so Reverse
-/// (ping-pong) mode can still hold TWO full-length blocks at once (record-forward
-/// + frozen-reverse), each up to ~2 s, tiling the ring exactly. Free/Confined get
-/// the longer `depth - 1` max for free.
+/// Ring depth (layers of the 2D texture array), `MAX_LOOP_FRAMES + 1` (VS-CAPACITY).
+/// 61 layers = a 60-frame (1.0 s @60 fps) max loop plus the stitch slot: at the
+/// deepest tap the Read is on layer `R - 59` while the Write is about to fill
+/// `R + 1`, 60 apart, so they never alias.
 ///
-/// Halved from 480 (2026-08-29) to pay for the tape going full-res
-/// (`WRITE-TAPE-SCALE` = 1.0): at 1080p RGBA16F that is ~3.98 GB for the single
-/// tape, which fits on a 12 GB card next to Resolume. The old half-res 480 was
-/// ~1.99 GB but cost ~0.35 round-trip gain at high spatial frequencies, which
-/// mushed tight fractal feedback into blobs within a few laps.
-const BUFFER_DEPTH: u32 = 240;
+/// Varispeed is the **short-loop fractal box** — the smoother dynamics of short
+/// loops are what make fractal and Euler-soup feedback work; long single-channel
+/// delay is `DlyT`/`DlyW`'s job. Dropping Reverse (which needed `2 * MAX_LOOP_FRAMES`
+/// to hold two blocks) plus the 1 s cap is what pays for a second channel at
+/// full-res RGBA16F: **965 MiB per channel at 1080p, 1.88 GiB for both**, against
+/// ~3.98 GB for the old single 240-layer tape.
+const BUFFER_DEPTH: u32 = 61;
+
+/// Independent tapes. Two Read/Write pairs on different channels are two separate
+/// feedback networks, each with its own in-loop FX stack. `REGISTRY`'s initializer
+/// must be written out in lockstep (a const array of non-Copy types can't use
+/// `[x; N]`), as in delay-core.
+const NUM_CHANNELS: usize = 2;
 
 /// The GPU ring buffer. Allocated lazily by the first recording Write. Stored at
 /// whatever (Write-scaled, now full-res) dimensions it is given.
@@ -40,9 +53,9 @@ struct Buffer {
     height: u32,
 }
 
-/// The single shared tape. `record_index` (the write cursor), the frame-barrier
-/// de-dup state, and the refcount live here so they survive reallocation and exist
-/// before any buffer does (a Read may acquire before any Write has allocated).
+/// One channel's tape. `record_index` (the write cursor), the frame-barrier de-dup
+/// state, and the refcount live here so they survive reallocation and exist before
+/// any buffer does (a Read may acquire before any Write has allocated).
 struct Tape {
     buffer: Option<Buffer>,
     refcount: u32,
@@ -72,7 +85,13 @@ const EMPTY: Tape = Tape {
     loop_slot_frame: 0,
 };
 
-static TAPE: Mutex<Tape> = Mutex::new(EMPTY);
+static REGISTRY: Mutex<[Tape; NUM_CHANNELS]> = Mutex::new([EMPTY, EMPTY]);
+
+/// Validate a channel index from across the C ABI. `None` ⇒ the caller no-ops.
+fn chan(channel: u32) -> Option<usize> {
+    let i = channel as usize;
+    (i < NUM_CHANNELS).then_some(i)
+}
 
 /// Load this DLL's own GL function pointers (per-DLL; idempotent).
 fn ensure_gl() {
@@ -89,18 +108,27 @@ pub extern "C" fn vc_depth() -> u32 {
     BUFFER_DEPTH
 }
 
+/// Number of independent tapes, so the plugins can size their Channel param.
+#[no_mangle]
+pub extern "C" fn vc_channels() -> u32 {
+    NUM_CHANNELS as u32
+}
+
 /// Register a plugin instance's use of the tape. Balanced by [`vc_release`].
 #[no_mangle]
-pub extern "C" fn vc_acquire() {
-    TAPE.lock().unwrap().refcount += 1;
+pub extern "C" fn vc_acquire(channel: u32) {
+    let Some(i) = chan(channel) else { return };
+    REGISTRY.lock().unwrap()[i].refcount += 1;
 }
 
 /// Unregister. When the last user releases, the buffer is dropped and the barrier
 /// reset. Does NO GL (may run off the GL thread) — the texture name leaks until
 /// process exit, matching delay-core / the shipped v2 delay.
 #[no_mangle]
-pub extern "C" fn vc_release() {
-    let mut t = TAPE.lock().unwrap();
+pub extern "C" fn vc_release(channel: u32) {
+    let Some(i) = chan(channel) else { return };
+    let mut reg = REGISTRY.lock().unwrap();
+    let t = &mut reg[i];
     t.refcount = t.refcount.saturating_sub(1);
     if t.refcount == 0 {
         t.buffer = None; // leaks the GL texture name (see doc comment)
@@ -117,9 +145,11 @@ pub extern "C" fn vc_release() {
 /// NOT called while frozen (Write Send=0), so the cursor parks and the Read's loop
 /// window stays put. `width`/`height` are the Write-scaled (full-res) tape dims.
 #[no_mangle]
-pub extern "C" fn vc_write_tick(width: u32, height: u32, frame_id: u64) -> u64 {
+pub extern "C" fn vc_write_tick(channel: u32, width: u32, height: u32, frame_id: u64) -> u64 {
+    let Some(i) = chan(channel) else { return 0 };
     ensure_gl();
-    let mut t = TAPE.lock().unwrap();
+    let mut reg = REGISTRY.lock().unwrap();
+    let t = &mut reg[i];
 
     if width != 0 && height != 0 {
         let needs_alloc = match &t.buffer {
@@ -137,7 +167,7 @@ pub extern "C" fn vc_write_tick(width: u32, height: u32, frame_id: u64) -> u64 {
             let tex = alloc_buffer(width, height);
             // RGBA16F = 8 bytes/texel; width/height are the full-res tape dims.
             let vram_mb = (width as u64 * height as u64 * 8 * BUFFER_DEPTH as u64) / (1024 * 1024);
-            tracing::info!(width, height, depth = BUFFER_DEPTH, vram_mb, "varispeed tape allocated");
+            tracing::info!(channel, width, height, depth = BUFFER_DEPTH, vram_mb, "varispeed tape allocated");
             t.buffer = Some(Buffer { texture_array: tex, width, height });
         }
     }
@@ -153,27 +183,34 @@ pub extern "C" fn vc_write_tick(width: u32, height: u32, frame_id: u64) -> u64 {
 
 /// Current write cursor. The Read anchors its loop window off this (no advance).
 #[no_mangle]
-pub extern "C" fn vc_record_index() -> u64 {
-    TAPE.lock().unwrap().record_index
+pub extern "C" fn vc_record_index(channel: u32) -> u64 {
+    let Some(i) = chan(channel) else { return 0 };
+    REGISTRY.lock().unwrap()[i].record_index
 }
 
 /// Confine mode: the Read publishes the ring slot its play head sits on, tagged
-/// with the current `frame_id`. The Write reads it back with [`vc_loop_slot`] and
+/// with its channel and
+/// the current `frame_id`. The Write reads it back with [`vc_loop_slot`] and
 /// records there, closing the feedback loop in place within the window.
+///
+/// One slot per channel, so a channel supports at most ONE Confined Read; several
+/// would overwrite each other's handoff. Multi-tap is Free-only (VS-MULTITAP).
 #[no_mangle]
-pub extern "C" fn vc_set_loop_slot(slot: u32, frame_id: u64) {
-    let mut t = TAPE.lock().unwrap();
-    t.loop_slot = slot as i64;
-    t.loop_slot_frame = frame_id;
+pub extern "C" fn vc_set_loop_slot(channel: u32, slot: u32, frame_id: u64) {
+    let Some(i) = chan(channel) else { return };
+    let mut reg = REGISTRY.lock().unwrap();
+    reg[i].loop_slot = slot as i64;
+    reg[i].loop_slot_frame = frame_id;
 }
 
 /// The Confine-mode write slot published by the Read this frame, or `-1` if none
 /// (free-ring mode / no Read upstream). Frame-scoped: a stale `frame_id` returns -1.
 #[no_mangle]
-pub extern "C" fn vc_loop_slot(frame_id: u64) -> i64 {
-    let t = TAPE.lock().unwrap();
-    if t.loop_slot_frame == frame_id {
-        t.loop_slot
+pub extern "C" fn vc_loop_slot(channel: u32, frame_id: u64) -> i64 {
+    let Some(i) = chan(channel) else { return -1 };
+    let reg = REGISTRY.lock().unwrap();
+    if reg[i].loop_slot_frame == frame_id {
+        reg[i].loop_slot
     } else {
         -1
     }
@@ -181,13 +218,15 @@ pub extern "C" fn vc_loop_slot(frame_id: u64) -> i64 {
 
 /// Texture-array name for the ring buffer, or 0 if unallocated.
 #[no_mangle]
-pub extern "C" fn vc_tex() -> u32 {
-    TAPE.lock().unwrap().buffer.as_ref().map_or(0, |b| b.texture_array)
+pub extern "C" fn vc_tex(channel: u32) -> u32 {
+    let Some(i) = chan(channel) else { return 0 };
+    REGISTRY.lock().unwrap()[i].buffer.as_ref().map_or(0, |b| b.texture_array)
 }
 
 /// Allocate a cleared RGBA16F 2D texture array of `BUFFER_DEPTH` layers (VS-STORAGE),
 /// or 0 on GL error. Float removes banding; the Write stores at full resolution, so
-/// the full-depth tape is ~3.98 GB at 1080p. Mirrors delay-core's alloc. FBOs are NOT created
+/// one channel's full-depth tape is ~965 MiB at 1080p. Mirrors delay-core's alloc.
+/// FBOs are NOT created
 /// here — the plugins own their FBOs; only the texture name crosses the ABI.
 fn alloc_buffer(width: u32, height: u32) -> GLuint {
     unsafe {

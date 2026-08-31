@@ -9,15 +9,19 @@ use std::ffi::c_void;
 use std::sync::OnceLock;
 
 /// Bound varispeed-core entry points. Signatures MUST match varispeed-core's `vc_*`.
+///
+/// Every tape-addressing call takes a leading `channel` (VS-CHANNELS); an
+/// out-of-range channel is a no-op returning a zero value.
 pub struct VcApi {
     pub depth: extern "C" fn() -> u32,
-    pub acquire: extern "C" fn(),
-    pub release: extern "C" fn(),
-    pub write_tick: extern "C" fn(u32, u32, u64) -> u64,
-    pub record_index: extern "C" fn() -> u64,
-    pub tex: extern "C" fn() -> u32,
-    pub set_loop_slot: extern "C" fn(u32, u64),
-    pub loop_slot: extern "C" fn(u64) -> i64,
+    pub channels: extern "C" fn() -> u32,
+    pub acquire: extern "C" fn(u32),
+    pub release: extern "C" fn(u32),
+    pub write_tick: extern "C" fn(u32, u32, u32, u64) -> u64,
+    pub record_index: extern "C" fn(u32) -> u64,
+    pub tex: extern "C" fn(u32) -> u32,
+    pub set_loop_slot: extern "C" fn(u32, u32, u64),
+    pub loop_slot: extern "C" fn(u32, u64) -> i64,
 }
 unsafe impl Sync for VcApi {}
 unsafe impl Send for VcApi {}
@@ -85,6 +89,7 @@ fn load() -> VcApi {
         }
         VcApi {
             depth: proc!("vc_depth"),
+            channels: proc!("vc_channels"),
             acquire: proc!("vc_acquire"),
             release: proc!("vc_release"),
             write_tick: proc!("vc_write_tick"),
@@ -148,6 +153,7 @@ fn load() -> VcApi {
         }
         VcApi {
             depth: proc!("vc_depth"),
+            channels: proc!("vc_channels"),
             acquire: proc!("vc_acquire"),
             release: proc!("vc_release"),
             write_tick: proc!("vc_write_tick"),

@@ -26,7 +26,7 @@ use ffgl_core::{FFGLData, GLInput};
 use params::{LoopMode, ReadParams, SyncMode, NUM_PARAMS};
 use pluglib::vc_api;
 use shader::ReadShaders;
-use varispeed_dsp::{advance_age, advance_head, confined_slot, sample_age, sample_block, sample_confined, warp_offset};
+use varispeed_dsp::{advance_age, advance_head, anchor_age, confined_slot, sample_age, sample_confined, warp_offset};
 
 /// 4/4 assumption for subdivision → cycles-per-bar (see VS-DOPPLER note).
 const BEATS_PER_BAR: f32 = 4.0;
@@ -36,17 +36,6 @@ fn frame_id(data: &FFGLData) -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-/// Reverse-mode play head reset at a block swap. For reverse rates start at the
-/// newest recorded frame (`len-1`) so playback flows newest→oldest with no jump;
-/// for forward/freeze rates start at the oldest (`0`).
-fn reverse_reset_pos(rate: f64, len: u32) -> f64 {
-    if rate < 0.0 {
-        len.saturating_sub(1) as f64
-    } else {
-        0.0
-    }
 }
 
 pub struct VarispeedRead {
@@ -71,15 +60,15 @@ pub struct VarispeedRead {
     prev_record_index: u64,
     have_prev: bool,
 
-    // Reverse (ping-pong block) state. Two Loop-length blocks live in the ring at
-    // layer bases `0` and `loop_len`. `active_block` (0/1) records the live signal
-    // forward at `rec_pos` (1/frame metronome); the other block is frozen and played
-    // at `play_pos` (advanced by Rate). They swap every `loop_len` frames. `rev_len`
-    // latches the block length so a Loop-length change restarts the ping-pong clean.
-    active_block: u32,
-    rec_pos: u32,
-    play_pos: f64,
-    rev_len: u32,
+    // VS-ANCHOR seeding state: the loop length `age` was last seeded for, and the
+    // mode last drawn in, so Free re-anchors on a length change and on entry to
+    // Free. `None` = never drawn, so the first Free frame seeds.
+    seeded_len: u32,
+    last_mode: Option<LoopMode>,
+
+    // The channel `vc_acquire` was called for, so a Channel change can rebalance
+    // the refcount (mirrors DelayTap).
+    acquired_channel: u32,
 }
 
 impl VarispeedRead {
@@ -150,20 +139,30 @@ impl VarispeedRead {
         host_viewport: [GLint; 4],
     ) {
         let vc = vc_api();
+        let ch = self.params.channel();
         let depth = (vc.depth)();
-        let record_index = (vc.record_index)();
-        let tex = (vc.tex)();
+        let record_index = (vc.record_index)(ch);
+        let tex = (vc.tex)(ch);
 
         let mode = self.params.loop_mode();
 
-        // Loop length (read window) in frames. Free/Confined use the whole ring (less
-        // the newest slot the writer owns). Reverse needs TWO Loop-length blocks live
-        // at once, so its window is capped at half the ring (2*loop_len <= depth).
-        let max_len = match mode {
-            LoopMode::Reverse => (depth / 2).max(1),
-            _ => depth.saturating_sub(1).max(1),
-        };
+        // Loop length (read window) in frames, capped at the N+1 stitch: the newest
+        // slot belongs to the writer, so the deepest tap is `depth - 1` (VS-CAPACITY).
+        let max_len = depth.saturating_sub(1).max(1);
         let loop_len = self.loop_frames(data.host_beat.bpm, max_len);
+
+        // VS-ANCHOR. Free's `age` is a fixed point at Rate 1x (`dr - rate == 0`), so
+        // without seeding it would sit at its initial 0 — a 1-frame feedback loop
+        // with Loop Length inert. Seeding it to `loop_len - 1` makes Loop Length the
+        // tap time: directly settable, patch-recallable, and different per instance
+        // so N Free Reads on one channel are N distinct taps (VS-MULTITAP).
+        if mode == LoopMode::Free
+            && (self.last_mode != Some(LoopMode::Free) || self.seeded_len != loop_len)
+        {
+            self.age = anchor_age(loop_len);
+        }
+        self.seeded_len = loop_len;
+        self.last_mode = Some(mode);
 
         let rate = self.params.rate() as f64;
 
@@ -182,40 +181,8 @@ impl VarispeedRead {
                 // Publish floor(head) so the Write records the FX'd output back into
                 // the slot just read → in-place accumulating feedback, no ring reset.
                 self.head = advance_head(self.head, rate, loop_len);
-                (vc.set_loop_slot)(confined_slot(self.head, loop_len), frame_id(data));
+                (vc.set_loop_slot)(ch, confined_slot(self.head, loop_len), frame_id(data));
                 sample_confined(self.head + warp, loop_len, depth)
-            }
-            LoopMode::Reverse => {
-                // Ping-pong block reverse. A Loop-length change restarts the cycle so
-                // the two blocks stay aligned to the new length.
-                if loop_len != self.rev_len {
-                    self.rev_len = loop_len;
-                    self.active_block = 0;
-                    self.rec_pos = 0;
-                    self.play_pos = reverse_reset_pos(rate, loop_len);
-                }
-                let active_base = self.active_block * loop_len;
-                let frozen_base = (1 - self.active_block) * loop_len;
-
-                // Publish the FORWARD record slot in the active block; the Write lays
-                // the live signal (which carries the reverse feedback via Wet) there.
-                let rec_slot = (active_base + self.rec_pos) % depth;
-                (vc.set_loop_slot)(rec_slot, frame_id(data));
-
-                // Read the FROZEN block at the play head (honours Rate: reverse /
-                // forward / fast / slow), then advance it.
-                let s = sample_block(frozen_base, self.play_pos + warp, loop_len, depth);
-                self.play_pos = advance_head(self.play_pos, rate, loop_len);
-
-                // Advance the record metronome; swap blocks when the active fills so
-                // the just-recorded block becomes the frozen one played next.
-                self.rec_pos += 1;
-                if self.rec_pos >= loop_len {
-                    self.active_block ^= 1;
-                    self.rec_pos = 0;
-                    self.play_pos = reverse_reset_pos(rate, loop_len);
-                }
-                s
             }
             LoopMode::Free => {
                 // Free float: age anchored to the moving write cursor. dr = how far the
@@ -261,7 +228,7 @@ impl SimpleFFGLInstance for VarispeedRead {
         gl::load_with(|s| gl_loader::get_proc_address(s).cast());
         let _ = inst_data;
 
-        (vc_api().acquire)();
+        (vc_api().acquire)(0);
 
         Self {
             params: ReadParams::new(),
@@ -279,10 +246,9 @@ impl SimpleFFGLInstance for VarispeedRead {
             head: 0.0,
             prev_record_index: 0,
             have_prev: false,
-            active_block: 0,
-            rec_pos: 0,
-            play_pos: 0.0,
-            rev_len: 0,
+            seeded_len: 0,
+            last_mode: None,
+            acquired_channel: 0,
         }
     }
 
@@ -374,6 +340,15 @@ impl SimpleFFGLInstance for VarispeedRead {
 
     fn set_param(&mut self, index: usize, value: f32) {
         self.params.set(index, value);
+        if index == params::PARAM_CHANNEL {
+            let new_ch = self.params.channel();
+            if new_ch != self.acquired_channel {
+                let vc = vc_api();
+                (vc.release)(self.acquired_channel);
+                (vc.acquire)(new_ch);
+                self.acquired_channel = new_ch;
+            }
+        }
     }
 
     fn plugin_info() -> ffgl_core::info::PluginInfo {
@@ -381,7 +356,7 @@ impl SimpleFFGLInstance for VarispeedRead {
             unique_id: *b"VsRd",
             name: *b"Varispeed Read  ",
             ty: ffgl_core::info::PluginType::Effect,
-            about: "Varispeed playback head: variable-rate/reverse/freeze loop over a shared tape. Place first: Read->FX->Write".to_string(),
+            about: "Varispeed playback head: variable-rate/freeze loop over a shared tape. Place first: Read->FX->Write".to_string(),
             description: "Varispeed — Read head (pairs with Varispeed Write on the shared tape)".to_string(),
         }
     }
@@ -389,7 +364,7 @@ impl SimpleFFGLInstance for VarispeedRead {
 
 impl Drop for VarispeedRead {
     fn drop(&mut self) {
-        (vc_api().release)();
+        (vc_api().release)(self.acquired_channel);
     }
 }
 

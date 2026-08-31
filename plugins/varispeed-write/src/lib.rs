@@ -55,6 +55,9 @@ pub struct VarispeedWrite {
     /// This plugin's own FBO; the shared buffer layer is attached per draw.
     fbo: GLuint,
     frame_count: u64,
+    /// The channel `vc_acquire` was called for, so a Channel change can rebalance
+    /// the refcount (mirrors DelayWrite).
+    acquired_channel: u32,
 }
 
 impl VarispeedWrite {
@@ -71,6 +74,7 @@ impl VarispeedWrite {
         host_viewport: [GLint; 4],
     ) {
         let vc = vc_api();
+        let ch = self.params.channel();
         let uv_scale = [width as f32 / hw_width as f32, height as f32 / hw_height as f32];
         let send = self.params.send();
         let shaders = self.shaders.as_ref().unwrap();
@@ -84,15 +88,15 @@ impl VarispeedWrite {
             let tape_w = ((width as f32 * TAPE_SCALE).round() as u32).max(1);
             let tape_h = ((height as f32 * TAPE_SCALE).round() as u32).max(1);
             let fid = frame_id(data);
-            let record_index = (vc.write_tick)(tape_w, tape_h, fid);
-            let tex = (vc.tex)();
+            let record_index = (vc.write_tick)(ch, tape_w, tape_h, fid);
+            let tex = (vc.tex)(ch);
             let depth = (vc.depth)();
 
             if tex != 0 && depth != 0 {
                 // Confine mode: the Read published the slot its play head sits on —
                 // record the FX'd input back into it (in-place loop feedback). Free
                 // mode (no slot published this frame): append at the write cursor.
-                let confined = (vc.loop_slot)(fid);
+                let confined = (vc.loop_slot)(ch, fid);
                 let wp = if confined >= 0 {
                     (confined as u32) % depth
                 } else {
@@ -124,13 +128,14 @@ impl SimpleFFGLInstance for VarispeedWrite {
         gl::load_with(|s| gl_loader::get_proc_address(s).cast());
         let _ = inst_data;
 
-        (vc_api().acquire)();
+        (vc_api().acquire)(0);
 
         Self {
             params: WriteParams::new(),
             shaders: None,
             fbo: 0,
             frame_count: 0,
+            acquired_channel: 0,
         }
     }
 
@@ -220,6 +225,15 @@ impl SimpleFFGLInstance for VarispeedWrite {
 
     fn set_param(&mut self, index: usize, value: f32) {
         self.params.set(index, value);
+        if index == params::PARAM_CHANNEL {
+            let new_ch = self.params.channel();
+            if new_ch != self.acquired_channel {
+                let vc = vc_api();
+                (vc.release)(self.acquired_channel);
+                (vc.acquire)(new_ch);
+                self.acquired_channel = new_ch;
+            }
+        }
     }
 
     fn plugin_info() -> ffgl_core::info::PluginInfo {
@@ -237,7 +251,7 @@ impl Drop for VarispeedWrite {
     fn drop(&mut self) {
         // Release the tape refcount. No GL here (context may not be current); the
         // FBO name leaks until process exit, matching the delay plugins.
-        (vc_api().release)();
+        (vc_api().release)(self.acquired_channel);
     }
 }
 
