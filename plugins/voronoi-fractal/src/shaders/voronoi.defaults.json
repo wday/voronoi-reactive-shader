@@ -19,5 +19,6 @@
   "u_contrast": 1.0,
   "u_image_blend": 0.0,
   "u_anim_time": 0.0,
-  "u_beat_locked": 0.0
+  "u_beat_locked": 0.0,
+  "u_fill_level": 0.55
 }

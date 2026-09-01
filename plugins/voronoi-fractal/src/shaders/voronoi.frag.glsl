@@ -37,6 +37,7 @@ uniform float u_image_influence;  // master image gate
 uniform float u_nc_kernel;
 uniform float u_cert_contrast;    // gamma on source luminance
 uniform float u_cert_brightness;  // tonal swing from the image
+uniform float u_fill_level;       // cell interior level; 0 = black ground
 uniform float u_brightness;
 uniform float u_contrast;
 uniform float u_image_blend;
@@ -362,14 +363,22 @@ vec3 shade(float hue, float edgeDist, float edgeScale) {
     // FV-TONEGATE: fills and edges share one gate, so Cert Brightness moves both.
     float toneGate = u_cert_brightness * u_image_influence;
 
-    float cellValue = mix(0.55, g_cert, toneGate);
+    // Fill Level is the interior/background level. It must be a knob, not the
+    // old hardcoded 0.55: the Contrast stretch pivots at 0.5, so a fill sitting
+    // at 0.55 is pinned to the pivot and Contrast can never drive it to black.
+    float cellValue = mix(u_fill_level, g_cert, toneGate);
     vec3 cellRGB = hsv2rgb(vec3(hue, u_color_sat, cellValue));
 
     float w = max(u_edge_width, 0.001);
     float edgeFactor = 1.0 - smoothstep(0.0, w, edgeDist);
     float glowRange = max(w * (1.0 + u_edge_glow * 4.0), 0.001);
     float glowFactor = (1.0 - smoothstep(0.0, glowRange, edgeDist)) * u_edge_glow;
-    float totalEdge = clamp(max(edgeFactor, glowFactor), 0.0, 1.0) * edgeScale;
+    // FV-EDGEGATE: edge presence scales with local certainty as Image Influence
+    // comes up, so edges fade out over dark ground and survive only on lit
+    // subjects. With Fill Level at 0 this isolates fractal outlines of whatever
+    // the image actually contains. Cert Contrast sets how hard the cut is.
+    float edgeGain = mix(1.0, g_cert, u_image_influence);
+    float totalEdge = clamp(max(edgeFactor, glowFactor), 0.0, 1.0) * edgeScale * edgeGain;
 
     float edgeBright = mix(1.0, mix(0.15, 1.0, g_cert), toneGate);
     vec3 edgeRGB = hsv2rgb(vec3(hue, u_color_sat * 0.2, edgeBright));

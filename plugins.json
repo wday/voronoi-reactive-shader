@@ -9,7 +9,7 @@
     },
     {
       "name": "voronoi_fractal",
-      "display_name": "Voronoi Fractal",
+      "display_name": "Voronoi Fract v2",
       "type": "rust",
       "crate": "voronoi-fractal",
       "dll": "voronoi_fractal.dll"

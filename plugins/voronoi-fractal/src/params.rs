@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 
 use ffgl_core::parameters::{ParamInfo, ParameterTypes, SimpleParamInfo};
 
-pub const NUM_PARAMS: usize = 21;
+pub const NUM_PARAMS: usize = 22;
 pub const PARAM_MODE: usize = 0;
 pub const PARAM_DENSITY: usize = 1;
 pub const PARAM_LAYER_SPREAD: usize = 2;
@@ -29,9 +29,10 @@ pub const PARAM_IMAGE_INFLUENCE: usize = 14;
 pub const PARAM_NC_KERNEL: usize = 15;
 pub const PARAM_CERT_CONTRAST: usize = 16;
 pub const PARAM_CERT_BRIGHTNESS: usize = 17;
-pub const PARAM_BRIGHTNESS: usize = 18;
-pub const PARAM_CONTRAST: usize = 19;
-pub const PARAM_IMAGE_BLEND: usize = 20;
+pub const PARAM_FILL_LEVEL: usize = 18;
+pub const PARAM_BRIGHTNESS: usize = 19;
+pub const PARAM_CONTRAST: usize = 20;
+pub const PARAM_IMAGE_BLEND: usize = 21;
 
 /// Beat Sync positions (FV-SYNC). Index 0 is free-run; the rest are the drift
 /// period in bars. Mirrors the Subdivision idiom in delay-line-module.
@@ -57,6 +58,7 @@ const DEFAULTS: [f32; NUM_PARAMS] = [
     0.18, // nc kernel      → ~0.1
     0.18, // cert contrast  → ~1.0
     0.60, // cert brightness
+    0.55, // fill level     → matches the old hardcoded interior level
     0.50, // brightness     → 1.0
     0.50, // contrast       → 1.0
     0.00, // image blend
@@ -88,6 +90,7 @@ static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
         std("NC Kernel", DEFAULTS[PARAM_NC_KERNEL]),
         std("Cert Contrast", DEFAULTS[PARAM_CERT_CONTRAST]),
         std("Cert Brightness", DEFAULTS[PARAM_CERT_BRIGHTNESS]),
+        std("Fill Level", DEFAULTS[PARAM_FILL_LEVEL]),
         std("Brightness", DEFAULTS[PARAM_BRIGHTNESS]),
         std("Contrast", DEFAULTS[PARAM_CONTRAST]),
         std("Image Blend", DEFAULTS[PARAM_IMAGE_BLEND]),
@@ -197,6 +200,12 @@ impl VoronoiParams {
 
     pub fn cert_brightness(&self) -> f32 {
         self.values[PARAM_CERT_BRIGHTNESS]
+    }
+
+    /// Cell interior / background level. 0 gives a fully black ground, which is
+    /// what makes edge-only output possible at Color Sat 0.
+    pub fn fill_level(&self) -> f32 {
+        self.values[PARAM_FILL_LEVEL]
     }
 
     pub fn brightness(&self) -> f32 {

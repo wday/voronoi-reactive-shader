@@ -88,6 +88,7 @@ impl SimpleFFGLInstance for VoronoiFractal {
             nc_kernel: self.params.nc_kernel(),
             cert_contrast: self.params.cert_contrast(),
             cert_brightness: self.params.cert_brightness(),
+            fill_level: self.params.fill_level(),
             brightness: self.params.brightness(),
             contrast: self.params.contrast(),
             image_blend: self.params.image_blend(),
@@ -127,8 +128,11 @@ impl SimpleFFGLInstance for VoronoiFractal {
 
     fn plugin_info() -> ffgl_core::info::PluginInfo {
         ffgl_core::info::PluginInfo {
-            unique_id: *b"VrFr",
-            name: *b"Voronoi Fractal ",
+            // Bumped from VrFr when Fill Level (param 22) was added: Resolume
+            // caches param descriptors against unique_id, so a layout change is
+            // invisible under the old id. See CREDITS/devstate.
+            unique_id: *b"VrF2",
+            name: *b"Voronoi Fract v2",
             ty: ffgl_core::info::PluginType::Effect,
             about: "Hierarchical jittered Voronoi with image-driven coastlines".to_string(),
             description: "Fractal Voronoi partitions whose boundaries follow input structure; \

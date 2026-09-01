@@ -2,7 +2,7 @@
 
 ## Built
 
-`plugins/voronoi-fractal/` — FFGL plugin `VrFr`, "Voronoi Fractal ", 21 params.
+`plugins/voronoi-fractal/` — FFGL plugin `VrFr`, "Voronoi Fractal ", 22 params.
 Registered in `plugins/Cargo.toml` and `plugins.json`. Cross-builds clean to
 `voronoi_fractal.dll` (945 KB).
 
@@ -26,6 +26,10 @@ Registered in `plugins/Cargo.toml` and `plugins.json`. Cross-builds clean to
   Spread in 1.5..4.0 and Depth in 2..6. FV-BOUND holds.
 - **Coastline Bias is not inert** — 57.6% of pixels change by >8/255 between
   bias 0 and 1.
+- **Fill Level reaches true black** — at `Fill Level = 0`, 97.4% of the frame is
+  exactly 0 (at the old hardcoded 0.55 the frame minimum was 140/255).
+- **Edge gating isolates the subject** — ink falling on a lit figure rises from
+  20.6% (chance) to 78.9% as Image Influence goes 0 → 1, a 3.8x concentration.
 
 ## Established facts
 
@@ -68,6 +72,8 @@ Registered in `plugins/Cargo.toml` and `plugins.json`. Cross-builds clean to
   real footage — all verification so far is against synthetic sources.
 - Whether `barPhase` sync actually lands on the beat in Resolume. The clock
   logic is tested; the host's phase reporting is not.
+- Whether the edge gate holds up on real footage, where "lit subject" is far
+  messier than a synthetic blob and the background is rarely near-black.
 - Whether Coastline Bias reads as "input structure" visually. It is a strong
   deformation but provably not a watershed (see FV-COAST); whether that is the
   wanted effect is a judgement to make on real footage.

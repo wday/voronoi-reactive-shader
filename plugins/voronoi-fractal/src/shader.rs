@@ -154,6 +154,7 @@ pub struct VoronoiUniforms {
     pub nc_kernel: f32,
     pub cert_contrast: f32,
     pub cert_brightness: f32,
+    pub fill_level: f32,
     pub brightness: f32,
     pub contrast: f32,
     pub image_blend: f32,
@@ -181,6 +182,7 @@ pub struct VoronoiShader {
     loc_nc_kernel: GLint,
     loc_cert_contrast: GLint,
     loc_cert_brightness: GLint,
+    loc_fill_level: GLint,
     loc_brightness: GLint,
     loc_contrast: GLint,
     loc_image_blend: GLint,
@@ -213,6 +215,7 @@ impl VoronoiShader {
         let loc_nc_kernel = program.uniform_loc("u_nc_kernel");
         let loc_cert_contrast = program.uniform_loc("u_cert_contrast");
         let loc_cert_brightness = program.uniform_loc("u_cert_brightness");
+        let loc_fill_level = program.uniform_loc("u_fill_level");
         let loc_brightness = program.uniform_loc("u_brightness");
         let loc_contrast = program.uniform_loc("u_contrast");
         let loc_image_blend = program.uniform_loc("u_image_blend");
@@ -239,6 +242,7 @@ impl VoronoiShader {
             loc_nc_kernel,
             loc_cert_contrast,
             loc_cert_brightness,
+            loc_fill_level,
             loc_brightness,
             loc_contrast,
             loc_image_blend,
@@ -274,6 +278,7 @@ impl VoronoiShader {
             gl::Uniform1f(self.loc_nc_kernel, u.nc_kernel);
             gl::Uniform1f(self.loc_cert_contrast, u.cert_contrast);
             gl::Uniform1f(self.loc_cert_brightness, u.cert_brightness);
+            gl::Uniform1f(self.loc_fill_level, u.fill_level);
             gl::Uniform1f(self.loc_brightness, u.brightness);
             gl::Uniform1f(self.loc_contrast, u.contrast);
             gl::Uniform1f(self.loc_image_blend, u.image_blend);

@@ -107,6 +107,21 @@ edges. Fixed here.)
 
 ## Tone
 
+**FV-FILL** — The cell interior level is the `Fill Level` knob, not a constant.
+It must be a knob: `Contrast` stretches around a 0.5 pivot, so the old
+hardcoded 0.55 sat essentially *on* the pivot and no amount of Contrast could
+drive the ground to black. At `Fill Level = 0` with `Color Sat = 0` the ground
+is fully black (measured: 97.4% of pixels at exactly 0), which is what makes
+edge-only output possible.
+
+**FV-EDGEGATE** — Edge presence is scaled by `mix(1.0, certainty, imageInfluence)`,
+so as Image Influence rises, edges fade over dark ground and survive only where
+the image is lit. Combined with `Fill Level = 0` this isolates fractal outlines
+of the subject. Measured: ink falling on a lit figure rises from 20.6% (chance)
+to 78.9% as Influence goes 0 → 1. `Cert Contrast` sets how hard the cut is.
+Note the total amount of ink drops as the gate closes — compensate with Edge
+Width or Edge Glow.
+
 **FV-TONE** — `Contrast` is applied **once, to the composited image**, after the
 layer average and before `Brightness`. (The ISF applies it per layer inside the
 loop, with a `clamp(...,0,1)` that crushes each layer's headroom before the
@@ -142,7 +157,7 @@ topology holds.
 ## Parameters
 
 All FFGL params are normalised `0..1` and mapped in accessors, matching
-`parcel-subdivision`. 21 params:
+`parcel-subdivision`. 22 params:
 
 | # | Name | Range / meaning |
 |---|---|---|
@@ -164,9 +179,10 @@ All FFGL params are normalised `0..1` and mapped in accessors, matching
 | 15 | NC Kernel | 0.01..0.5 certainty blur radius |
 | 16 | Cert Contrast | 0.1..5 gamma on source luminance |
 | 17 | Cert Brightness | 0..1 tonal swing from the image |
-| 18 | Brightness | 0..2 output gain |
-| 19 | Contrast | 0..2 output tone stretch |
-| 20 | Image Blend | 0..1 mix back to source |
+| 18 | Fill Level | 0..1 cell interior / ground level; 0 = black |
+| 19 | Brightness | 0..2 output gain |
+| 20 | Contrast | 0..2 output tone stretch |
+| 21 | Image Blend | 0..1 mix back to source |
 
 Params 14–17 are adjacent so the image-mapping group reads as a group in the
 Resolume panel.
