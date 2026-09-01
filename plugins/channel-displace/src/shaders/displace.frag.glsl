@@ -71,7 +71,16 @@ vec4 sampleCubic(vec2 uv) {
 
 void main() {
     vec4 original = sampleContent(v_uv);
-    vec2 dir = vec2(cos(u_angle), sin(u_angle)) * u_amount;
+
+    // v_uv spans the frame WIDTH in x and the frame HEIGHT in y, so a raw
+    // vec2(cos,sin) offset is anisotropic: on 16:9 it displaced 192 px at angle
+    // 0 but 108 px at 90, and an Angle of 45 came out as 29.4 on screen. Scaling
+    // y by the aspect makes the displacement isotropic in screen space, so the
+    // Angle knob means what it says. Chosen over scaling x so that angle 0 —
+    // the ordinary horizontal chromatic shift — is bit-identical to before.
+    vec2 content = vec2(textureSize(u_input, 0)) * u_uv_scale;
+    float aspect = content.x / max(content.y, 1.0);
+    vec2 dir = vec2(cos(u_angle), sin(u_angle) * aspect) * u_amount;
 
     float r_out, g_out, b_out;
 
