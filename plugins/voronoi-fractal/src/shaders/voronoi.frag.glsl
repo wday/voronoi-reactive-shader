@@ -54,8 +54,12 @@ const int   MAX_LEVELS = 6;
 // required when jitter fills the whole square; our jitter is confined to
 // [0.1,0.9] (FV-BOUND), so ±1 may suffice. Settled by measurement, not assumption.
 #define PARENT_R 1
-// FV-COAST domain-warp strength, in aspect-scaled uv per unit luminance gradient.
-const float COAST_GAIN = 0.6;
+// FV-COAST domain-warp strength, in aspect-scaled uv per unit luminance
+// gradient. One unit of aspect-scaled uv is a FRAME HEIGHT, so this number is
+// large: displacement_pixels = gradient * amount^2 * COAST_GAIN * frame_height.
+// At 0.6 the full range reached 648 px and a mid setting warped a photo by
+// 20-30 px, which reads as a registration error rather than an effect.
+const float COAST_GAIN = 0.15;
 
 float g_aspect;
 vec2  g_center;
@@ -179,7 +183,10 @@ vec2 coast_warp(vec2 uv, float amount) {
     float e = 0.02;
     float gx = imageCertaintyRaw(uv + vec2(e, 0.0)) - imageCertaintyRaw(uv - vec2(e, 0.0));
     float gy = imageCertaintyRaw(uv + vec2(0.0, e)) - imageCertaintyRaw(uv - vec2(0.0, e));
-    return uv + vec2(gx, gy) * amount * COAST_GAIN;
+    // Squared response: the low half of the knob stays subtle (a few px) while
+    // the top still reaches a strong warp. Plain multiplication put usable-
+    // looking settings straight into visible-misregistration territory.
+    return uv + vec2(gx, gy) * (amount * amount) * COAST_GAIN;
 }
 
 
