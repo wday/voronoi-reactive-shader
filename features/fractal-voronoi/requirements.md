@@ -66,15 +66,22 @@ crinkliness), so a fixed trace is correct by definition.
 luminance gradient, before any grid lookup:
 
 ```
-uv += vec2(dL/dx, dL/dy) * coastlineBias * imageInfluence * COAST_GAIN
+uv += vec2(dL/dx, dL/dy) * (bias*influence)^2 * COAST_GAIN
 ```
 
 Every level is viewed through the same warp, so the hierarchy bends coherently
 and root boundaries deform with image structure. Sites are untouched, so
 ancestry is unchanged and cannot tear.
 
-What this does and does not do — measured, not asserted. It is a strong,
-visible deformation: at full bias, 57.6% of pixels change by more than 8/255.
+**The gain is in frame-heights, not pixels.** One unit of aspect-scaled uv is a
+whole frame height, so `displacement_px = gradient * amount^2 * COAST_GAIN * H`.
+`COAST_GAIN = 0.15` with a squared response puts the full range at ~162 px and
+keeps the lower half of the knob at single-digit pixels. At 0.6 linear (the
+original value) a mid setting displaced a photo by 20-30 px and a checkerboard
+by 157 px, which reads as a registration error rather than an effect. Any future
+change to this constant must be checked in pixels.
+
+What it does and does not do — measured. It is a strong, visible deformation.
 It is **not** a watershed: boundaries do not preferentially settle onto bright
 ridges (enrichment ~1.0x, where 1.0x is chance).
 
@@ -86,6 +93,21 @@ across gains from 8 to 150, for both ±1 and ±2 search, and for both
 midpoint-sampled and max-along-link penalties. Do not re-specify it: making
 boundaries land on image structure requires the level-0 *sites* to move, which
 is a different algorithm.
+
+**FV-NPOT** — Resolume supplies an NPOT-padded input: on this rig 1920x1080
+content inside a 1920x1088 texture, so `uv_scale = (1.0, 0.99265)` — padded
+vertically only. All sampling goes through `content_uv()`, which maps frame uv
+onto the content and keeps samples half a texel inside the outer content texel
+centres, so LINEAR filtering never blends the black padding in. Verified: 480x270
+content in a 512x304 texture gives mean|delta| 124.46 uncorrected, exactly 0.00
+corrected, and exactly 0.00 no-op on unpadded input.
+
+**FV-NCALIGN** — The certainty field is weighted by the **drifted** seed
+distance, the same distance that decides which cell a pixel belongs to. Weighing
+by the undrifted distance quantises the image to a different Voronoi diagram
+than the one drawn — offset by the drift, which is a static 0.35 cells even at
+Drift Speed 0 because the circular term is nonzero at time 0. At low Density
+that is large in absolute terms (over 100 px at Density 2).
 
 **FV-SITEONLY** — All image coupling in Fractal mode is evaluated **at site
 positions**, never at the querying fragment. This is load-bearing: a per-pixel
@@ -176,7 +198,7 @@ All FFGL params are normalised `0..1` and mapped in accessors, matching
 | 12 | Color Shift | 0..1 hue rotation |
 | 13 | Color Sat | 0..1 |
 | 14 | Image Influence | 0..1 master image gate |
-| 15 | NC Kernel | 0.01..0.5 certainty blur radius |
+| 15 | NC Kernel | 0.02..1.20 certainty radius **in cell units**; low = plates |
 | 16 | Cert Contrast | 0.1..5 gamma on source luminance |
 | 17 | Cert Brightness | 0..1 tonal swing from the image |
 | 18 | Fill Level | 0..1 cell interior / ground level; 0 = black |
