@@ -190,8 +190,11 @@ impl VoronoiParams {
         self.values[PARAM_IMAGE_INFLUENCE]
     }
 
+    /// Certainty-blur radius in CELL units (not uv): it weighs distances that
+    /// are themselves in cell units. Small = certainty snaps to the voronoi cell
+    /// that owns the pixel, which is the sharp, cell-aligned look.
     pub fn nc_kernel(&self) -> f32 {
-        0.01 + self.values[PARAM_NC_KERNEL] * 0.49
+        0.02 + self.values[PARAM_NC_KERNEL] * 1.18
     }
 
     pub fn cert_contrast(&self) -> f32 {

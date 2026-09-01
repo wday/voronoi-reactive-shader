@@ -12,7 +12,7 @@
   "u_color_shift": 0.0,
   "u_color_sat": 0.7,
   "u_image_influence": 0.6,
-  "u_nc_kernel": 0.1,
+  "u_nc_kernel": 0.23,
   "u_cert_contrast": 1.0,
   "u_cert_brightness": 0.6,
   "u_brightness": 1.0,
@@ -20,5 +20,9 @@
   "u_image_blend": 0.0,
   "u_anim_time": 0.0,
   "u_beat_locked": 0.0,
-  "u_fill_level": 0.55
+  "u_fill_level": 0.55,
+  "u_uv_scale": [
+    1.0,
+    1.0
+  ]
 }

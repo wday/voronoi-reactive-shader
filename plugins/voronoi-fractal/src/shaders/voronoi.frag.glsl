@@ -20,6 +20,10 @@ out vec4 out_color;
 
 uniform sampler2D u_input;
 uniform vec2  u_texel_size;
+// Content fraction of the NPOT-padded input: Width/HardwareWidth. Resolume hands
+// us a texture whose real content occupies only [0,u_uv_scale]; sampling raw
+// [0,1] reads padding and shifts the source against the generated pattern.
+uniform vec2  u_uv_scale;
 
 uniform float u_fractal;          // 0 = Layered, 1 = Fractal
 uniform float u_density;          // base grid scale
@@ -106,10 +110,17 @@ vec3 hsv2rgb(vec3 c) {
 
 // --- Image certainty ---
 
+// Map frame uv [0,1] onto the padded texture's content, staying half a texel
+// inside the outer content texel centres so LINEAR filtering never blends the
+// black padding in (the recurring NPOT edge seam).
+vec2 content_uv(vec2 uv) {
+    vec2 texel = 1.0 / vec2(textureSize(u_input, 0));
+    return 0.5 * texel + clamp(uv, 0.0, 1.0) * (u_uv_scale - texel);
+}
+
 // `uv` is aspect-scaled space; undo the stretch before sampling.
 float imageCertaintyRaw(vec2 uv) {
-    vec2 t = clamp(vec2(uv.x / g_aspect, uv.y), 0.0, 1.0);
-    vec3 c = texture(u_input, t).rgb;
+    vec3 c = texture(u_input, content_uv(vec2(uv.x / g_aspect, uv.y))).rgb;
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
@@ -198,6 +209,31 @@ vec2 drift_for(vec2 cellPos, float level, float cert) {
 }
 
 
+// Normalised-convolution certainty over the 3x3 seed neighbourhood.
+//
+// The kernel radius is in CELL units, matching the distances it weighs. It used
+// to be multiplied by the grid scale, which at Fractal depth 4 (scale = density
+// * spread^4) made the radius ~14 cells — far wider than the 9 seeds available,
+// so every seed got equal weight and the certainty field was a flat blur. A
+// 0.5-cell floor then blocked any sharpening. Small radius = certainty snaps to
+// the voronoi cell that owns the pixel.
+//
+// Weights are taken relative to the nearest seed so the exponential cannot
+// underflow to zero at small radii; the common factor cancels in the ratio.
+float nc_certainty(float certs[9], float d2s[9], float dmin2) {
+    float kr = max(u_nc_kernel, 0.02);
+    float inv = 1.0 / (2.0 * kr * kr);
+    float wsum = 0.0;
+    float csum = 0.0;
+    for (int k = 0; k < 9; k++) {
+        float w = exp(-(d2s[k] - dmin2) * inv);
+        csum += certs[k] * w;
+        wsum += w;
+    }
+    return wsum > 1e-6 ? csum / wsum : 0.0;
+}
+
+
 // ===================== Layered mode =====================
 
 // Returns vec4(F1, F2, cellID.x, cellID.y) and writes g_cert.
@@ -218,8 +254,10 @@ vec4 voronoiLayer(vec2 uv, float scale, float level) {
     float f2 = 10.0;
     vec2 nearestCell = vec2(0.0);
 
-    float certWeighted = 0.0;
-    float certWeight = 0.0;
+    float certs[9];
+    float d2s[9];
+    float dmin2 = 1e9;
+    int idx = 0;
 
     for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
@@ -231,11 +269,11 @@ vec4 voronoiLayer(vec2 uv, float scale, float level) {
             float cert = imageCertainty(seedUV);
 
             vec2 point0 = neighbor + seedBase;
-            float dist0 = length(point0 - localP);
-            float kr = max(u_nc_kernel * modScale, 0.5);
-            float w = exp(-0.5 * (dist0 * dist0) / (kr * kr));
-            certWeighted += cert * w;
-            certWeight += w;
+            float d0 = length(point0 - localP);
+            certs[idx] = cert;
+            d2s[idx] = d0 * d0;
+            dmin2 = min(dmin2, d2s[idx]);
+            idx++;
 
             vec2 point = point0 + drift_for(cellPos, level, cert);
             float dist = length(point - localP);
@@ -250,7 +288,7 @@ vec4 voronoiLayer(vec2 uv, float scale, float level) {
         }
     }
 
-    g_cert = certWeight > 0.001 ? certWeighted / certWeight : 0.0;
+    g_cert = nc_certainty(certs, d2s, dmin2);
     return vec4(f1, f2, nearestCell);
 }
 
@@ -317,8 +355,10 @@ vec4 fractalNearest(vec2 uv, float level, out vec2 nearest, out vec2 second) {
     nearest = cell;
     second = cell;
 
-    float certWeighted = 0.0;
-    float certWeight = 0.0;
+    float certs[9];
+    float d2s[9];
+    float dmin2 = 1e9;
+    int idx = 0;
 
     for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
@@ -331,11 +371,11 @@ vec4 fractalNearest(vec2 uv, float level, out vec2 nearest, out vec2 second) {
             float cert = imageCertainty(seedUV);
 
             vec2 point0 = neighbor + seedBase;
-            float dist0 = length(point0 - localP);
-            float kr = max(u_nc_kernel * scale, 0.5);
-            float w = exp(-0.5 * (dist0 * dist0) / (kr * kr));
-            certWeighted += cert * w;
-            certWeight += w;
+            float d0 = length(point0 - localP);
+            certs[idx] = cert;
+            d2s[idx] = d0 * d0;
+            dmin2 = min(dmin2, d2s[idx]);
+            idx++;
 
             vec2 point = point0 + drift_for(cellPos, level, cert);
             float dist = length(point - localP);
@@ -352,7 +392,7 @@ vec4 fractalNearest(vec2 uv, float level, out vec2 nearest, out vec2 second) {
         }
     }
 
-    g_cert = certWeight > 0.001 ? certWeighted / certWeight : 0.0;
+    g_cert = nc_certainty(certs, d2s, dmin2);
     return vec4(f1, f2, 0.0, 0.0);
 }
 
@@ -442,7 +482,7 @@ void main() {
     color = clamp((color - 0.5) * u_contrast + 0.5, 0.0, 1.0);
     color *= u_brightness;
 
-    vec4 src = texture(u_input, clamp(v_uv, 0.0, 1.0));
+    vec4 src = texture(u_input, content_uv(v_uv));
     color = mix(color, src.rgb, u_image_blend);
 
     out_color = vec4(color, 1.0);

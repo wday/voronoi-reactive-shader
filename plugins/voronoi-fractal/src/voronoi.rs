@@ -15,6 +15,7 @@ pub struct VoronoiFractal {
     params: VoronoiParams,
     shader: Option<VoronoiShader>,
     clock: DriftClock,
+    logged_dims: bool,
 }
 
 impl SimpleFFGLInstance for VoronoiFractal {
@@ -27,6 +28,7 @@ impl SimpleFFGLInstance for VoronoiFractal {
             params: VoronoiParams::new(),
             shader: None,
             clock: DriftClock::new(),
+            logged_dims: false,
         }
     }
 
@@ -44,10 +46,25 @@ impl SimpleFFGLInstance for VoronoiFractal {
             [1.0 / w, 1.0 / h]
         };
 
-        let input_tex = if !frame_data.textures.is_empty() {
-            frame_data.textures[0].Handle as GLuint
+        // Resolume hands us an NPOT-padded texture: real content occupies only
+        // [0, Width/HardwareWidth]. Without this the source is sampled across the
+        // padding and sits shifted against the generated pattern.
+        let (input_tex, uv_scale) = if !frame_data.textures.is_empty() {
+            let t = &frame_data.textures[0];
+            let scale = [
+                t.Width as f32 / t.HardwareWidth.max(1) as f32,
+                t.Height as f32 / t.HardwareHeight.max(1) as f32,
+            ];
+            if !self.logged_dims {
+                self.logged_dims = true;
+                tracing::info!(
+                    "voronoi-fractal input {}x{} in hardware {}x{} -> uv_scale {:.5},{:.5}",
+                    t.Width, t.Height, t.HardwareWidth, t.HardwareHeight, scale[0], scale[1]
+                );
+            }
+            (t.Handle as GLuint, scale)
         } else {
-            0
+            (0, [1.0, 1.0])
         };
 
         let period = self.params.sync_period_bars();
@@ -72,6 +89,7 @@ impl SimpleFFGLInstance for VoronoiFractal {
 
         let uniforms = VoronoiUniforms {
             texel_size,
+            uv_scale,
             fractal: self.params.fractal_mode(),
             density: self.params.density(),
             layer_spread: self.params.layer_spread(),

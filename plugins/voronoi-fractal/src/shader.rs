@@ -138,6 +138,7 @@ impl Drop for ShaderProgram {
 
 pub struct VoronoiUniforms {
     pub texel_size: [f32; 2],
+    pub uv_scale: [f32; 2],
     pub fractal: f32,
     pub density: f32,
     pub layer_spread: f32,
@@ -166,6 +167,7 @@ pub struct VoronoiShader {
     program: ShaderProgram,
     loc_input: GLint,
     loc_texel_size: GLint,
+    loc_uv_scale: GLint,
     loc_fractal: GLint,
     loc_density: GLint,
     loc_layer_spread: GLint,
@@ -199,6 +201,7 @@ impl VoronoiShader {
 
         let loc_input = program.uniform_loc("u_input");
         let loc_texel_size = program.uniform_loc("u_texel_size");
+        let loc_uv_scale = program.uniform_loc("u_uv_scale");
         let loc_fractal = program.uniform_loc("u_fractal");
         let loc_density = program.uniform_loc("u_density");
         let loc_layer_spread = program.uniform_loc("u_layer_spread");
@@ -226,6 +229,7 @@ impl VoronoiShader {
             program,
             loc_input,
             loc_texel_size,
+            loc_uv_scale,
             loc_fractal,
             loc_density,
             loc_layer_spread,
@@ -262,6 +266,7 @@ impl VoronoiShader {
             gl::BindTexture(gl::TEXTURE_2D, input_tex);
             gl::Uniform1i(self.loc_input, 0);
             gl::Uniform2f(self.loc_texel_size, u.texel_size[0], u.texel_size[1]);
+            gl::Uniform2f(self.loc_uv_scale, u.uv_scale[0], u.uv_scale[1]);
             gl::Uniform1f(self.loc_fractal, u.fractal);
             gl::Uniform1f(self.loc_density, u.density);
             gl::Uniform1f(self.loc_layer_spread, u.layer_spread);
