@@ -53,6 +53,13 @@
       "dll": "mirror_transform.dll"
     },
     {
+      "name": "transform_3d",
+      "display_name": "Transform 3D",
+      "type": "rust",
+      "crate": "transform-3d",
+      "dll": "transform_3d.dll"
+    },
+    {
       "name": "logistic_feedback",
       "type": "rust",
       "crate": "logistic-feedback",

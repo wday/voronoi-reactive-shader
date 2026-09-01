@@ -17,6 +17,7 @@ members = [
     "varispeed-write",
     "varispeed-read",
     "mirror-transform",
+    "transform-3d",
     "logistic-feedback",
     "channel-displace",
     "slew-limiter",
