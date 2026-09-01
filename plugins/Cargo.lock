@@ -872,6 +872,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "voronoi-fractal"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
 name = "wasm-bindgen"
 version = "0.2.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"

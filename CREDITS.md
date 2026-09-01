@@ -34,6 +34,43 @@ in GLSL by Inigo Quilez.
   - [Voronoi - basic](https://www.shadertoy.com/view/MslGD8)
 - **Tutorial:** [The Book of Shaders, Chapter 12](https://thebookofshaders.com/12/)
 
+## Fractal Jittered Voronoi Partitions — Boris the Brave
+
+The `voronoi-fractal` plugin's Fractal mode implements a hierarchical jittered
+Voronoi partition: each level subdivides the one above, every site is parented
+to the nearest site one level up, and a query point's colour comes from the
+level-0 cell its ancestry reaches. Boundaries are therefore resolved at the
+finest level's scale — fractal coastlines rather than polygon edges.
+
+- **Author:** Boris the Brave
+- **Article:** ["Fractal Jittered Voronoi Partitions"](https://www.boristhebrave.com/2026/08/29/fractal-jittered-voronoi-partitions/), 29 August 2026
+- **Reference implementation:** [Shadertoy sfKSDw](https://www.shadertoy.com/view/sfKSDw), by the same author
+- **License:** the article states no explicit licence; the Shadertoy carries no
+  licence header, so Shadertoy's default CC BY-NC-SA 3.0 should be assumed for
+  *that source text*. The algorithm itself is a mathematical technique.
+
+**Provenance of our implementation.** `voronoi.frag.glsl` was written from the
+article's prose description; the reference shader was read afterwards, for
+comparison only. No code was copied from it. Two points were checked against it
+after the fact: the parent-search radius argument (it uses ±2 for full-square
+jitter, and states why), and the choice to colour by root cell.
+
+**Where we deliberately diverge:**
+
+- **Boundary detection.** The reference re-queries `rootCell` at four
+  neighbouring pixels and draws a binary edge. We compare the roots of the
+  nearest and second-nearest sites instead, which yields a *distance* to the
+  boundary and so supports antialiased edges and glow — necessary for a video
+  effect, and cheaper than four extra full ancestry traces.
+- **Search radius.** The reference uses ±2 (25 cells) because its jitter fills
+  the whole square. Ours is confined to `[0.1,0.9]`, so we use ±1 (9 cells).
+  Measured: ±1 and ±2 produce indistinguishable output at our jitter bound.
+- **Level ratio.** The reference halves each level (`exp2(-level)`). Ours
+  exposes the ratio as the `Layer Spread` knob.
+- **Adaptive depth.** The reference's article describes an adaptive early-out
+  for approximating infinite recursion. We omit it: `Depth` is an artistic knob
+  here, so a fixed trace is correct by definition.
+
 ## HSV to RGB — Sam Hocevar
 
 The branchless `vec4 K` conversion pattern.
@@ -106,6 +143,7 @@ The Free Frame GL plugin specification used by Resolume and other VJ software.
 |---|---|---|
 | Hash functions (Hoskins) | MIT | Yes |
 | Voronoi algorithm | Mathematical technique (not copyrightable) | Yes |
+| Fractal jittered partition (Boris the Brave) | Algorithm: mathematical technique. Reference shader not copied. | Yes |
 | HSV conversion (Hocevar) | WTFPL | Yes |
 | Normalized convolution (Knutsson & Westin) | Mathematical technique | Yes |
 | Value noise | Mathematical technique | Yes |

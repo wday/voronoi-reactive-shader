@@ -8,6 +8,13 @@
       "dll": "voronoi_reactive.dll"
     },
     {
+      "name": "voronoi_fractal",
+      "display_name": "Voronoi Fractal",
+      "type": "rust",
+      "crate": "voronoi-fractal",
+      "dll": "voronoi_fractal.dll"
+    },
+    {
       "name": "video_looper",
       "type": "rust",
       "crate": "video-looper",

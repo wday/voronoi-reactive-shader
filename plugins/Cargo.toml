@@ -16,6 +16,7 @@ members = [
     "delay-tap",
     "varispeed-write",
     "varispeed-read",
+    "voronoi-fractal",
     "mirror-transform",
     "transform-3d",
     "logistic-feedback",

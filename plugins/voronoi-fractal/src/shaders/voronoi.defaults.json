@@ -1,0 +1,23 @@
+{
+  "u_fractal": 1.0,
+  "u_density": 9.0,
+  "u_layer_spread": 2.0,
+  "u_layer_mix": 0.5,
+  "u_depth": 3.0,
+  "u_coastline": 0.5,
+  "u_drift_chaos": 0.3,
+  "u_warp": 0.0,
+  "u_edge_width": 0.04,
+  "u_edge_glow": 0.4,
+  "u_color_shift": 0.0,
+  "u_color_sat": 0.7,
+  "u_image_influence": 0.6,
+  "u_nc_kernel": 0.1,
+  "u_cert_contrast": 1.0,
+  "u_cert_brightness": 0.6,
+  "u_brightness": 1.0,
+  "u_contrast": 1.0,
+  "u_image_blend": 0.0,
+  "u_anim_time": 0.0,
+  "u_beat_locked": 0.0
+}
