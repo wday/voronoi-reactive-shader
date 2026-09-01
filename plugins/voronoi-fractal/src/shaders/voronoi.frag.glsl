@@ -110,9 +110,9 @@ vec3 hsv2rgb(vec3 c) {
 
 // --- Image certainty ---
 
-// Map frame uv [0,1] onto the padded texture's content, staying half a texel
-// inside the outer content texel centres so LINEAR filtering never blends the
-// black padding in (the recurring NPOT edge seam).
+// Map frame uv onto the padded texture's content, staying half a texel inside
+// the outer content texel centres so LINEAR filtering never blends the black
+// padding in (the recurring NPOT edge seam).
 vec2 content_uv(vec2 uv) {
     vec2 texel = 1.0 / vec2(textureSize(u_input, 0));
     return 0.5 * texel + clamp(uv, 0.0, 1.0) * (u_uv_scale - texel);
@@ -219,7 +219,14 @@ vec2 drift_for(vec2 cellPos, float level, float cert) {
 // the voronoi cell that owns the pixel.
 //
 // Weights are taken relative to the nearest seed so the exponential cannot
-// underflow to zero at small radii; the common factor cancels in the ratio.
+// underflow to zero at small radii; the common factor cancels in the ratio.//
+// FV-NCALIGN: the distance fed to the certainty field must be the DRIFTED one —
+// the same distance that decides which cell a pixel belongs to. Weighing by the
+// undrifted distance quantises the certainty field to a different Voronoi
+// diagram than the one being drawn, offset by the drift (a static 0.35 cells
+// even at Drift Speed 0). The image then reads through softly, out of register
+// with the visible cell boundaries, no matter how sharp the kernel is.
+
 float nc_certainty(float certs[9], float d2s[9], float dmin2) {
     float kr = max(u_nc_kernel, 0.02);
     float inv = 1.0 / (2.0 * kr * kr);
@@ -269,14 +276,14 @@ vec4 voronoiLayer(vec2 uv, float scale, float level) {
             float cert = imageCertainty(seedUV);
 
             vec2 point0 = neighbor + seedBase;
-            float d0 = length(point0 - localP);
-            certs[idx] = cert;
-            d2s[idx] = d0 * d0;
-            dmin2 = min(dmin2, d2s[idx]);
-            idx++;
-
             vec2 point = point0 + drift_for(cellPos, level, cert);
             float dist = length(point - localP);
+
+            // FV-NCALIGN: same distance as the cell assignment below.
+            certs[idx] = cert;
+            d2s[idx] = dist * dist;
+            dmin2 = min(dmin2, d2s[idx]);
+            idx++;
 
             if (dist < f1) {
                 f2 = f1;
@@ -371,14 +378,14 @@ vec4 fractalNearest(vec2 uv, float level, out vec2 nearest, out vec2 second) {
             float cert = imageCertainty(seedUV);
 
             vec2 point0 = neighbor + seedBase;
-            float d0 = length(point0 - localP);
-            certs[idx] = cert;
-            d2s[idx] = d0 * d0;
-            dmin2 = min(dmin2, d2s[idx]);
-            idx++;
-
             vec2 point = point0 + drift_for(cellPos, level, cert);
             float dist = length(point - localP);
+
+            // FV-NCALIGN: same distance as the cell assignment below.
+            certs[idx] = cert;
+            d2s[idx] = dist * dist;
+            dmin2 = min(dmin2, d2s[idx]);
+            idx++;
 
             if (dist < f1) {
                 f2 = f1;
