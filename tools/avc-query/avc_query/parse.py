@@ -42,6 +42,7 @@ class Param:
 class Source:
     source_type: str  # feedback, generator, capture, file
     source_name: str
+    file_path: str = ""  # full path as stored in the .avc (Windows form) for file sources
     scope: str = "clip"
     layer: int | None = None
     clip: str | None = None
@@ -286,10 +287,9 @@ def _extract_source(vs, ctx: dict, sources: list[Source]):
         file_name = ""
         for vfr in vs.iter("VideoFormatReaderSource"):
             file_name = vfr.get("fileName", "")
-        if file_name:
-            file_name = file_name.replace("\\", "/").rsplit("/", 1)[-1]
+        base = file_name.replace("\\", "/").rsplit("/", 1)[-1] if file_name else ""
         sources.append(Source(
-            source_type="file", source_name=file_name, **ctx,
+            source_type="file", source_name=base, file_path=file_name, **ctx,
         ))
 
 
