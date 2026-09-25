@@ -114,9 +114,9 @@ behind it. `age` is seeded to `L - 1` (§3) and moves by `dr - rate` per frame.
 - Frozen (`dr = 0`): `age` moves at `-rate`, so the captured `L`-window plays at
   `Rate` indefinitely, stable.
 
-**Confined** — the Read publishes the slot it is reading and the Write records back
-into that same slot, so feedback accumulates **in place** over a fixed `[0, L)`
-window. There is no rate mismatch at any Rate, so `Rate != 1` gives a *stable*
+**Confined** — the Read publishes the slot it is reading, its window length and its
+instance id; the Write records back into that same slot, so feedback accumulates
+**in place** over a fixed `[0, L)` window. There is no rate mismatch at any Rate, so `Rate != 1` gives a *stable*
 varispeed loop that still accumulates FX lap over lap — the controlled counterpart
 to Free's chaos. Never crosses the ring-lap seam.
 
@@ -141,6 +141,11 @@ Rules:
   do not accumulate lap over lap. For that, use the second channel.
 - **Confined Reads cannot share a channel** — they collide on the `loop_slot`
   handoff. Multi-tap is Free-only.
+- **A Confined Read may share a channel with Free Reads.** The Write records into
+  the Confined slot *and* sweeps the free-ring slot, skipping the Confined window
+  (VS-CONFINED-SWEEP), so the Free taps see a continuously refreshed ring. A Free
+  tap whose age carries it through the Confined window reads that window's
+  accumulating content, which is live, not stale.
 - All taps live within `N - 1` frames of the cursor.
 
 ## 8. Beat-sync
@@ -234,3 +239,39 @@ resolution, which a grid cell is not.
   shape is undecided.
 - **Blend Space** is a set-and-forget param occupying a playable slot. Candidate for
   removal (hard-coding Linear) if the knob count needs contracting further.
+
+
+## 9. Clearing the tape
+
+The ring depth is fixed (`BUFFER_DEPTH`), so unlike delay-core the loop length is
+**not** the ring modulus and changing it does not make the tape incoherent. Loop
+Length is a per-Read param and N Free Reads each own one (§7), so a Free retime must
+**never** reseed — it would wipe the other taps.
+
+**VS-CONFINED-RESEED** — Confined is the exception. There the window length defines
+the region the Write records into, so shrinking it strands content in the slots the
+new window no longer covers, and that is what resurrects old footage laps later.
+When the Read that *owns* the handoff changes its window, the core reseeds the tape
+to black and the reads warm up from black over one lap, exactly as on a fresh
+allocation. The owner check matters: two Confined Reads on one channel already fight
+over `loop_slot`, and without it they would ping-pong the window and reseed to black
+every frame.
+
+Otherwise a polluted tape self-clears: the Write sweeps the whole ring within
+`BUFFER_DEPTH` frames (~1 s at 60 fps), provided **Send > 0**.
+
+**Send = 0 freezes, it does not clear — deliberately.** The Write skips its tick
+entirely, so the tape keeps its content *and* `record_index` parks; a Free Read's age
+is then anchored to a stationary cursor and it plays one static frame, whose
+visibility scales with Wet.
+
+This is the design, not a compromise: freeze rides on the **Send knob itself**, so it
+is playable — grab it, and the loop stops dead on whatever is in the tape; let go, and
+recording resumes from there. No freeze button, no extra param, no mode switch, and it
+is continuous rather than binary, so partial Send is a partial-refresh smear. The cost
+is that a frozen tape is indistinguishable from a stuck loop unless you know the rule.
+**To flush, set Send > 0** and give it one lap.
+
+Last resort: removing every varispeed instance on a channel drops the buffer
+(refcount 0) and the next allocation is cleared — but `vc_release` does no GL, so
+the old texture name leaks until the process exits (~965 MiB per cycle at 1080p).

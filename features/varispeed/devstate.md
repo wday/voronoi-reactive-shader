@@ -44,6 +44,20 @@ Length a real knob in Free mode.
 - **A Free Read writes no tape state.** It reads `record_index` and publishes
   nothing. This is what makes multi-tap work; anything that makes Free publish
   breaks VS-MULTITAP.
+- **The Confined handoff carries `(owner, slot, len)`.** `len` drives
+  VS-CONFINED-RESEED and `owner` gates it, so two Confined Reads fighting over the
+  handoff cannot ping-pong the window and reseed the tape to black every frame.
+  `vc_set_loop_slot` is **GL-thread only** — it may clear the texture — unlike
+  `vc_release`, which deliberately does no GL.
+- **Reseed is Confined-scoped.** Depth is fixed, so loop length is not the ring
+  modulus as it is in delay-core; it is a per-Read tap time and N Free Reads each
+  own one. A Free retime must never reseed or it wipes the other taps.
+- **VS-CONFINED-SWEEP.** In Confine mode the Write records the Confined slot *and*
+  the free-ring slot, skipping the append when it lands inside `[0, L)` so the
+  in-place accumulation is not clobbered. Without it, a Confined Read pins the whole
+  channel's write head into the window while `record_index` keeps advancing, and any
+  Free Read on that channel reads slots nobody writes — replaying ancient content
+  that no Send setting can flush. Costs one extra write pass per frame in Confine.
 - **One `loop_slot` per channel** ⇒ at most one Confined Read per channel, and at
   most one Write per channel (`vc_write_tick` de-dups on `frame_id`, so a second
   Write in a host frame overwrites the first).
@@ -51,6 +65,17 @@ Length a real knob in Free mode.
   `pluglib` loader is: `VcApi`'s signatures must stay in lockstep with
   `varispeed-core`'s `vc_*`, and `Api` (the `dc_*` side) must stay untouched.
 - Save/restore the host FBO and `GL_TEXTURE0` — shared GL context with Resolume.
+
+## Unverified — the mixed-mode fix
+
+Built clean (core, write, read) and `varispeed-dsp`'s 28 tests still pass, but the
+change is GL-side and **not yet deployed or run in Resolume**. Untested in the host:
+
+- that a Confined Read plus N Free Reads on one channel now all show live content;
+- that Confined accumulation is still stable with the extra sweep write
+  (VS-CONFINED-STABLE) — the append skips `[0, L)`, but only a live run proves it;
+- that retiming a Confined window reseeds to black and warms up over one lap;
+- the cost of the second write pass at 1080p.
 
 ## Verified
 

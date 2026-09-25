@@ -20,8 +20,12 @@ pub struct VcApi {
     pub write_tick: extern "C" fn(u32, u32, u32, u64) -> u64,
     pub record_index: extern "C" fn(u32) -> u64,
     pub tex: extern "C" fn(u32) -> u32,
-    pub set_loop_slot: extern "C" fn(u32, u32, u64),
+    // (channel, owner, slot, len, frame_id) — owner and len added for
+    // VS-CONFINED-RESEED. Signatures must stay in lockstep with varispeed-core,
+    // so core/read/write deploy together.
+    pub set_loop_slot: extern "C" fn(u32, u64, u32, u32, u64),
     pub loop_slot: extern "C" fn(u32, u64) -> i64,
+    pub loop_len: extern "C" fn(u32, u64) -> i64,
 }
 unsafe impl Sync for VcApi {}
 unsafe impl Send for VcApi {}
@@ -97,6 +101,7 @@ fn load() -> VcApi {
             tex: proc!("vc_tex"),
             set_loop_slot: proc!("vc_set_loop_slot"),
             loop_slot: proc!("vc_loop_slot"),
+            loop_len: proc!("vc_loop_len"),
         }
     }
 }
@@ -161,6 +166,7 @@ fn load() -> VcApi {
             tex: proc!("vc_tex"),
             set_loop_slot: proc!("vc_set_loop_slot"),
             loop_slot: proc!("vc_loop_slot"),
+            loop_len: proc!("vc_loop_len"),
         }
     }
 }

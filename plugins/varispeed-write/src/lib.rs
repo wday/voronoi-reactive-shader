@@ -97,19 +97,33 @@ impl VarispeedWrite {
                 // record the FX'd input back into it (in-place loop feedback). Free
                 // mode (no slot published this frame): append at the write cursor.
                 let confined = (vc.loop_slot)(ch, fid);
-                let wp = if confined >= 0 {
-                    (confined as u32) % depth
-                } else {
-                    (record_index % depth as u64) as u32
-                };
-                unsafe {
+                let append = (record_index % depth as u64) as u32;
+                let wp = if confined >= 0 { (confined as u32) % depth } else { append };
+
+                let record = |layer: u32| unsafe {
                     gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
-                    gl::FramebufferTextureLayer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, tex, 0, wp as i32);
+                    gl::FramebufferTextureLayer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, tex, 0, layer as i32);
                     // Viewport = tape (downscaled) dims; uv_scale still maps to the
                     // full-res input → a full-frame downsample into the smaller layer.
                     gl::Viewport(0, 0, tape_w as i32, tape_h as i32);
+                    shaders.write_pass(input_tex, uv_scale, send);
+                };
+                record(wp);
+
+                // VS-CONFINED-SWEEP. In Confine mode the write above lands inside the
+                // fixed [0, L) window, so the rest of the ring is never refreshed —
+                // while `record_index` keeps advancing, so any Free Read on this
+                // channel reads slots nobody writes and replays whatever ancient
+                // content is in them. Sweep the free-ring slot too, skipping the
+                // Confined window itself so the in-place accumulation is not
+                // clobbered (VS-CONFINED-STABLE).
+                if confined >= 0 {
+                    let len = (vc.loop_len)(ch, fid);
+                    let inside = len > 0 && (append as i64) < len;
+                    if !inside && append != wp {
+                        record(append);
+                    }
                 }
-                shaders.write_pass(input_tex, uv_scale, send);
             }
         }
 

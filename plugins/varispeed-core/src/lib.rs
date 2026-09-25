@@ -73,6 +73,21 @@ struct Tape {
     /// `frame_id` (`vc_loop_slot`). `-1` / stale frame_id ⇒ free-ring mode.
     loop_slot: i64,
     loop_slot_frame: u64,
+    /// Confined window length last published, and the Read instance that published
+    /// it. The length is the region the Write records into, so a *change* leaves
+    /// stale content in the slots the new window no longer covers — the varispeed
+    /// analogue of delay-core's incoherent-tape reseed (VS-CONFINED-RESEED).
+    ///
+    /// Scoped to Confined on purpose. Loop Length is a per-Read param and N Free
+    /// Reads each own one (VS-MULTITAP); reseeding the shared tape because one tap
+    /// retimed would wipe the other taps. Only Confined's length defines what the
+    /// Write records, and only one Confined Read may share a channel, so only it
+    /// has the authority to reseed.
+    loop_len: u32,
+    /// Owner of `loop_len`. Two Confined Reads on one channel already fight over
+    /// `loop_slot`; without this they would also ping-pong `loop_len` and reseed
+    /// the tape to black every frame.
+    loop_owner: u64,
 }
 
 const EMPTY: Tape = Tape {
@@ -83,6 +98,8 @@ const EMPTY: Tape = Tape {
     frame_active: false,
     loop_slot: -1,
     loop_slot_frame: 0,
+    loop_len: 0,
+    loop_owner: 0,
 };
 
 static REGISTRY: Mutex<[Tape; NUM_CHANNELS]> = Mutex::new([EMPTY, EMPTY]);
@@ -134,6 +151,8 @@ pub extern "C" fn vc_release(channel: u32) {
         t.buffer = None; // leaks the GL texture name (see doc comment)
         t.frame_active = false;
         t.record_index = 0;
+        t.loop_len = 0;
+        t.loop_owner = 0;
     }
 }
 
@@ -195,12 +214,53 @@ pub extern "C" fn vc_record_index(channel: u32) -> u64 {
 ///
 /// One slot per channel, so a channel supports at most ONE Confined Read; several
 /// would overwrite each other's handoff. Multi-tap is Free-only (VS-MULTITAP).
+///
+/// `len` is the window the Read is looping over and `owner` identifies the Read.
+/// When the owning Read changes its window, the tape is reseeded to black
+/// (VS-CONFINED-RESEED): the slots the old, longer window covered still hold
+/// content the new window never rewrites, which is what resurrects old footage.
+/// Mirrors delay-core's loop-length reseed, but scoped to Confined — see
+/// [`Tape::loop_len`].
+///
+/// **GL thread only.** The reseed issues GL calls, so this must be called from a
+/// plugin's render, as varispeed-read does. Unlike [`vc_release`], it is not safe
+/// to call from teardown.
 #[no_mangle]
-pub extern "C" fn vc_set_loop_slot(channel: u32, slot: u32, frame_id: u64) {
+pub extern "C" fn vc_set_loop_slot(channel: u32, owner: u64, slot: u32, len: u32, frame_id: u64) {
     let Some(i) = chan(channel) else { return };
     let mut reg = REGISTRY.lock().unwrap();
-    reg[i].loop_slot = slot as i64;
-    reg[i].loop_slot_frame = frame_id;
+    let t = &mut reg[i];
+    t.loop_slot = slot as i64;
+    t.loop_slot_frame = frame_id;
+
+    // Only the established owner may reseed. A second Confined Read taking over the
+    // handoff adopts the window silently rather than wiping the tape every frame.
+    let owned = t.loop_owner == 0 || t.loop_owner == owner;
+    if owned && len != t.loop_len {
+        if t.loop_len != 0 {
+            if let Some(buf) = t.buffer.as_ref() {
+                ensure_gl();
+                unsafe { clear_texture_array(buf.texture_array) };
+                tracing::info!(channel, loop_len = len, "confined window changed → tape reseeded to black");
+            }
+        }
+        t.loop_len = len;
+    }
+    t.loop_owner = owner;
+}
+
+/// The Confined window length published this frame, or `-1` if none. Frame-scoped,
+/// like [`vc_loop_slot`]. The Write needs it to know which slots the Confined loop
+/// owns, so its free-ring append can step around them (VS-CONFINED-SWEEP).
+#[no_mangle]
+pub extern "C" fn vc_loop_len(channel: u32, frame_id: u64) -> i64 {
+    let Some(i) = chan(channel) else { return -1 };
+    let reg = REGISTRY.lock().unwrap();
+    if reg[i].loop_slot_frame == frame_id {
+        reg[i].loop_len as i64
+    } else {
+        -1
+    }
 }
 
 /// The Confine-mode write slot published by the Read this frame, or `-1` if none

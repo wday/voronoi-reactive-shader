@@ -26,6 +26,7 @@ use ffgl_core::{FFGLData, GLInput};
 use params::{LoopMode, ReadParams, SyncMode, NUM_PARAMS};
 use pluglib::vc_api;
 use shader::ReadShaders;
+use std::sync::atomic::{AtomicU64, Ordering};
 use varispeed_dsp::{advance_age, advance_head, anchor_age, confined_slot, sample_age, sample_confined, warp_offset};
 
 /// 4/4 assumption for subdivision → cycles-per-bar (see VS-DOPPLER note).
@@ -38,10 +39,22 @@ fn frame_id(data: &FFGLData) -> u64 {
         .unwrap_or(0)
 }
 
+/// Monotonic instance ids for the Confined window handoff. Starts at 1 so that 0
+/// stays available to the core as "unowned".
+fn next_owner() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 pub struct VarispeedRead {
     params: ReadParams,
     shaders: Option<ReadShaders>,
     frame_count: u64,
+
+    /// Process-unique id, so the core can tell which Confined Read owns the
+    /// window it reseeds on (VS-CONFINED-RESEED). Never 0 — the core reads 0 as
+    /// "unowned".
+    owner: u64,
 
     // fps estimate + latched loop length (mirrors DlyW's time handling).
     fps_estimate: f32,
@@ -181,7 +194,11 @@ impl VarispeedRead {
                 // Publish floor(head) so the Write records the FX'd output back into
                 // the slot just read → in-place accumulating feedback, no ring reset.
                 self.head = advance_head(self.head, rate, loop_len);
-                (vc.set_loop_slot)(ch, confined_slot(self.head, loop_len), frame_id(data));
+                // Publish the window as well as the slot: the core reseeds when the
+                // owning Read retimes it (VS-CONFINED-RESEED), and the Write needs
+                // the length to step its free-ring append around the Confined window
+                // (VS-CONFINED-SWEEP).
+                (vc.set_loop_slot)(ch, self.owner, confined_slot(self.head, loop_len), loop_len, frame_id(data));
                 sample_confined(self.head + warp, loop_len, depth)
             }
             LoopMode::Free => {
@@ -232,6 +249,7 @@ impl SimpleFFGLInstance for VarispeedRead {
 
         Self {
             params: ReadParams::new(),
+            owner: next_owner(),
             shaders: None,
             frame_count: 0,
             fps_estimate: 60.0,
