@@ -33,6 +33,35 @@ print(j.dumps(p))
 PTYPE=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['type'])")
 PDLL=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['dll'])")
 
+# macOS: native cargo, no cmd.exe. Each build is staged as build/macos/<stem>.dylib
+# for scripts/deploy-mac.sh to wrap in a bundle.
+if [ "$(uname -s)" = "Darwin" ]; then
+    STEM="${PDLL%.dll}"
+    MAC_OUT="$PROJECT_DIR/build/macos"
+    mkdir -p "$MAC_OUT"
+    # bindgen (ffgl-core) needs the SDK headers
+    export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"
+
+    if [ "$PTYPE" = "isf" ]; then
+        PSHADER=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['shader'])")
+        PDISPLAY=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('display_name', d['name']))")
+        echo "==> Building ISF plugin: $NAME ($PSHADER) as '$PDISPLAY'"
+        (cd "$PROJECT_DIR/vendor/ffgl-rs" && \
+            ISF_SOURCE="$PROJECT_DIR/$PSHADER" ISF_NAME="$PDISPLAY" cargo build --release -p ffgl-isf)
+        cp "$PROJECT_DIR/vendor/ffgl-rs/target/release/libffgl_isf.dylib" "$MAC_OUT/$STEM.dylib"
+    elif [ "$PTYPE" = "rust" ]; then
+        PCRATE=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['crate'])")
+        echo "==> Building Rust plugin: $NAME (crate: $PCRATE)"
+        (cd "$PROJECT_DIR/plugins" && cargo build --release -p "$PCRATE")
+        cp "$PROJECT_DIR/plugins/target/release/lib$STEM.dylib" "$MAC_OUT/$STEM.dylib"
+    else
+        echo "Unknown plugin type: $PTYPE" >&2
+        exit 1
+    fi
+    echo "==> Built: $MAC_OUT/$STEM.dylib"
+    exit 0
+fi
+
 if [ "$PTYPE" = "isf" ]; then
     PSHADER=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['shader'])")
     PDISPLAY=$(echo "$PLUGIN_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('display_name', d['name']))")

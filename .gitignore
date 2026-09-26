@@ -6,3 +6,4 @@ plugins/delay-gl-tests/target/
 __pycache__/
 *.pyc
 *:Zone.Identifier
+/build/

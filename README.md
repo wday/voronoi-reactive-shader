@@ -22,7 +22,12 @@ All Rust plugins build as Windows DLLs via FFGL. See [PLUGINS.md](PLUGINS.md) fo
 
 ## Build
 
-Requires WSL2 with Windows-side Rust toolchain. See `WINDOWS_ENVIRONMENT.md` for setup.
+Windows: requires WSL2 with Windows-side Rust toolchain. See `WINDOWS_ENVIRONMENT.md` for setup.
+
+macOS (Apple Silicon): native `cargo` plus the Command Line Tools — the same `make` targets work.
+Builds are staged in `build/macos/`; `make deploy` wraps each in an ad-hoc-signed `.bundle` in
+`~/Documents/Resolume Avenue/Extra Effects` (override with `RESOLUME_DIR=...`). The shared
+delay/varispeed cores go there loose as `lib*_core.dylib`, beside the bundles. Restart Resolume after deploying.
 
 ```
 make list                           # show registered plugins

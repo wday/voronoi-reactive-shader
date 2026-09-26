@@ -141,7 +141,7 @@ fn load() -> VcApi {
         let ok = dladdr(marker as *const c_void, &mut info);
         assert!(ok != 0 && !info.dli_fname.is_null(), "dladdr failed for plugin module");
         let path = PathBuf::from(CStr::from_ptr(info.dli_fname).to_string_lossy().into_owned());
-        let dir = path.parent().expect("plugin module has no parent dir");
+        let dir = crate::core_dir(&path);
 
         let core = dir.join(CORE_FILE);
         let core_c = CString::new(core.to_string_lossy().as_bytes()).unwrap();

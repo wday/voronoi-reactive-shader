@@ -37,7 +37,8 @@
       "display_name": "Delay Core (shared lib)",
       "type": "rust",
       "crate": "delay-core",
-      "dll": "delay_core.dll"
+      "dll": "delay_core.dll",
+      "shared_lib": true
     },
     {
       "name": "delay_write",
@@ -152,7 +153,8 @@
       "display_name": "Varispeed Core (shared lib)",
       "type": "rust",
       "crate": "varispeed-core",
-      "dll": "varispeed_core.dll"
+      "dll": "varispeed_core.dll",
+      "shared_lib": true
     },
     {
       "name": "varispeed_write",
