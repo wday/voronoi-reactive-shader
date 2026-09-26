@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import media as media_mod
+from . import migrate as migrate_mod
 from . import relink as relink_mod
 from . import resolume
 from .media import ConvertOpts, Media
@@ -42,7 +43,7 @@ class Query:
 
 # -- query parser -------------------------------------------------------------
 
-VERBS = {"list", "group", "count", "check", "convert", "replace", "relink"}
+VERBS = {"list", "group", "count", "check", "convert", "replace", "relink", "migrate"}
 SUBJECTS = {"blocks", "sources", "params", "media",
             "block", "source", "param"}
 KEYWORDS = {"like", "by", "with", "order", "where", "in", "--json"}
@@ -64,7 +65,7 @@ def parse_query(args: list[str]) -> Query:
 
     if len(args) < 1:
         raise ValueError("Usage: avc <verb> <subject> [clauses...]")
-    if len(args) < 2 and args[0].lower() not in ("check", "convert", "replace", "relink"):
+    if len(args) < 2 and args[0].lower() not in ("check", "convert", "replace", "relink", "migrate"):
         raise ValueError("Usage: avc <verb> <subject> [clauses...]")
 
     verb = args[0].lower()
@@ -72,15 +73,16 @@ def parse_query(args: list[str]) -> Query:
         verb = "replace"
     if verb not in VERBS:
         raise ValueError(
-            f"Unknown verb: {verb} (expected: list, group, count, check, convert)")
+            f"Unknown verb: {verb} "
+            "(expected: list, group, count, check, convert, replace, migrate)")
 
     # 'check' and 'convert' only ever act on media, so the subject may be left off.
-    if verb in ("check", "convert", "replace", "relink") and (
+    if verb in ("check", "convert", "replace", "relink", "migrate") and (
             len(args) < 2 or args[1].lower() not in SUBJECTS):
         args = [args[0], "media"] + args[1:]
 
     subject = _norm_subject(args[1])
-    if verb in ("check", "convert", "replace", "relink") and subject != "media":
+    if verb in ("check", "convert", "replace", "relink", "migrate") and subject != "media":
         raise ValueError(f"'{verb}' only applies to media, not {subject}")
     q = Query(verb=verb, subject=subject, json_output=json_output)
 
@@ -178,6 +180,9 @@ def execute(query: Query, compositions_dir: str) -> list | dict | int:
         all_blocks.extend(blocks)
         all_sources.extend(sources)
 
+    if query.verb == "migrate":
+        return _execute_migrate(query, files, origin)
+
     if query.subject == "media":
         if query.verb == "replace":
             return _execute_replace(query, all_sources, files, origin)
@@ -246,6 +251,50 @@ def _live_sources(query: Query, origin: str) -> tuple[list | None, str]:
     n_connected = sum(1 for s in srcs if s.connected)
     return srcs, (f"live: '{name}' as loaded in Resolume ({base}) — "
                   f"{len(srcs)} file clip(s), {n_connected} connected")
+
+
+def _execute_migrate(query: Query, files: list[Path], origin: str):
+    """Rewrite each composition's stored media paths onto another machine's filesystem.
+
+    Reads paths straight out of the .avc rather than going through media.collect(), which
+    probes every file with ffprobe: the destination media need not exist here, and on a
+    machine where it does exist probing 300+ files would cost minutes for data this never
+    uses. It also never consults the live API — Resolume is not expected to be running,
+    and on the source machine it must not be, or it may relink clips to the staging drive.
+    """
+    if not query.opts.manifest:
+        raise ValueError("migrate needs --manifest <path>")
+    if not query.opts.root:
+        raise ValueError("migrate needs --root <media root on the destination machine>")
+
+    out_dir = Path(query.opts.out_dir) if query.opts.out_dir else Path.cwd() / "migrated"
+    entries = migrate_mod.load_manifest(query.opts.manifest)
+
+    results = []
+    for f in files:
+        _blocks, srcs = parse_avc(f)
+        stored = []
+        for s in srcs:
+            if getattr(s, "source_type", "") != "file":
+                continue
+            raw = getattr(s, "file_path", "") or getattr(s, "source_name", "")
+            if raw and raw not in stored:
+                stored.append(raw)
+        p = migrate_mod.plan(f, stored, entries, query.opts.root, out_dir)
+        written = 0 if query.opts.dry_run else migrate_mod.apply(p)
+        results.append({
+            "composition": f.stem,
+            "refs": len(stored),
+            "mapped": len(p.mapping),
+            "unmatched": p.unmatched,
+            "bundled": p.bundled,
+            "ambiguous": p.ambiguous,
+            "skipped_class": p.skipped_class,
+            "replacements": written,
+            "target": str(p.target_avc),
+        })
+    return {"kind": "migrate", "origin": origin, "dry_run": query.opts.dry_run,
+            "root": query.opts.root, "out_dir": str(out_dir), "results": results}
 
 
 def _execute_replace(query: Query, sources: list[Source], files: list[Path], origin: str):

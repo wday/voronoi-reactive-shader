@@ -11,6 +11,8 @@ def format_output(result, query) -> str:
         return _format_json(result, query) if query.json_output else _format_check(result)
     if isinstance(result, dict) and result.get("kind") == "replace":
         return _format_json(result, query) if query.json_output else _format_replace(result)
+    if isinstance(result, dict) and result.get("kind") == "migrate":
+        return _format_json(result, query) if query.json_output else _format_migrate(result)
     if isinstance(result, dict) and result.get("kind") == "convert":
         return _format_json(result, query) if query.json_output else _format_convert(result)
     if query.json_output:
@@ -20,6 +22,59 @@ def format_output(result, query) -> str:
     if query.verb == "group":
         return _format_grouped(result, query)
     return _format_list(result, query)
+
+
+def _format_migrate(r: dict) -> str:
+    """Per-composition tally, then every unresolved path — those are the actionable part."""
+    out = []
+    head = f"migrate -> {r['out_dir']}   (media root: {r['root']})"
+    if r.get("dry_run"):
+        head += "   [dry run — nothing written]"
+    out.append(head)
+    out.append("")
+
+    rows = r["results"]
+    w = max((len(x["composition"]) for x in rows), default=12)
+    tot_refs = tot_map = tot_un = tot_amb = 0
+    for x in rows:
+        tot_refs += x["refs"]; tot_map += x["mapped"]
+        tot_un += len(x["unmatched"]); tot_amb += len(x["ambiguous"])
+        flags = []
+        if x["unmatched"]:
+            flags.append(f"{len(x['unmatched'])} unmatched")
+        if x["ambiguous"]:
+            flags.append(f"{len(x['ambiguous'])} ambiguous")
+        if x.get("bundled"):
+            flags.append(f"{len(x['bundled'])} bundled")
+        if x["skipped_class"]:
+            flags.append(f"{len(x['skipped_class'])} not staged")
+        out.append(f"  {x['composition']:<{w}}  {x['mapped']:>3}/{x['refs']:<3} mapped"
+                   + ("   " + ", ".join(flags) if flags else ""))
+
+    out.append("")
+    tot_bun = sum(len(x.get("bundled", [])) for x in rows)
+    out.append(f"  {len(rows)} composition(s): {tot_map}/{tot_refs} references mapped, "
+               f"{tot_bun} bundled (Resolume's own), {tot_un} unmatched, {tot_amb} ambiguous")
+
+    seen = set()
+    un = [(x["composition"], u) for x in rows for u in x["unmatched"]]
+    if un:
+        out.append("")
+        out.append("  unmatched — no manifest row claims these:")
+        for comp, path in un:
+            if path in seen:
+                continue
+            seen.add(path)
+            out.append(f"    {path}")
+    amb = [(x["composition"], a) for x in rows for a in x["ambiguous"]]
+    if amb:
+        out.append("")
+        out.append("  ambiguous — several manifest rows tie; disambiguate before relying on these:")
+        for comp, (path, score, targets) in amb:
+            out.append(f"    {path}   (matched {score} component(s))")
+            for t in targets:
+                out.append(f"        -> {t}")
+    return "\n".join(out)
 
 
 # -- table output -------------------------------------------------------------

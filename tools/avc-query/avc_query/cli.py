@@ -71,6 +71,12 @@ def _split_flags(args: list[str]) -> tuple[list[str], ConvertOpts, bool, str]:
             if opts.fit not in ("crop", "pad"):
                 raise ValueError("--fit must be crop or pad")
             i += 1
+        elif a == "--manifest":
+            opts.manifest = _need(args, i + 1, "--manifest")
+            i += 1
+        elif a == "--root":
+            opts.root = _need(args, i + 1, "--root")
+            i += 1
         elif a == "--out-dir":
             opts.out_dir = _need(args, i + 1, "--out-dir")
             i += 1

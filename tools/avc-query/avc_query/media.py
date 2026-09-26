@@ -39,6 +39,8 @@ class ConvertOpts:
     force: bool = False
     dry_run: bool = False
     convert: bool = False          # 'replace' may encode missing HAP siblings first
+    manifest: str | None = None    # 'migrate': TSV of source -> target-relative paths
+    root: str | None = None        # 'migrate': media root on the destination machine
 
 
 @dataclass
