@@ -24,6 +24,12 @@ if not p:
 print(p['dll'].removesuffix('.dll'), int(p.get('shared_lib', False)))
 ")
 
+# STEM names what gets replaced in Extra Effects below; refuse anything unexpected.
+if [[ ! "$STEM" =~ ^[a-z0-9_]+$ ]]; then
+    echo "==> ERROR: bad plugin stem '$STEM' for $NAME" >&2
+    exit 1
+fi
+
 LIB="$MAC_OUT/$STEM.dylib"
 if [ ! -f "$LIB" ]; then
     echo "==> ERROR: $LIB not found. Run 'make build PLUGIN=$NAME' first." >&2
@@ -39,8 +45,13 @@ if [ "$SHARED" = "1" ]; then
     exit 0
 fi
 
+# A previous deploy is moved aside into the build tree, never deleted in place.
 BUNDLE="$RESOLUME_DIR/$STEM.bundle"
-rm -rf "$BUNDLE"
+if [ -e "$BUNDLE" ]; then
+    REPLACED="$MAC_OUT/replaced/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$REPLACED"
+    mv "$BUNDLE" "$REPLACED/"
+fi
 mkdir -p "$BUNDLE/Contents/MacOS"
 cp "$LIB" "$BUNDLE/Contents/MacOS/$STEM"
 cat > "$BUNDLE/Contents/Info.plist" <<EOF
