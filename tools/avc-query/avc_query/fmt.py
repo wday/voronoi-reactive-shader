@@ -48,6 +48,8 @@ def _format_migrate(r: dict) -> str:
             flags.append(f"{len(x['bundled'])} bundled")
         if x["skipped_class"]:
             flags.append(f"{len(x['skipped_class'])} not staged")
+        if x.get("renamed"):
+            flags.append(f"{sum(x['renamed'].values())} plugin(s) renamed")
         out.append(f"  {x['composition']:<{w}}  {x['mapped']:>3}/{x['refs']:<3} mapped"
                    + ("   " + ", ".join(flags) if flags else ""))
 
@@ -55,6 +57,18 @@ def _format_migrate(r: dict) -> str:
     tot_bun = sum(len(x.get("bundled", [])) for x in rows)
     out.append(f"  {len(rows)} composition(s): {tot_map}/{tot_refs} references mapped, "
                f"{tot_bun} bundled (Resolume's own), {tot_un} unmatched, {tot_amb} ambiguous")
+
+    renamed: dict = {}
+    for x in rows:
+        for name, n in x.get("renamed", {}).items():
+            renamed[name] = renamed.get(name, 0) + n
+    if renamed:
+        from .migrate import PLUGIN_RENAMES
+        new_names = {old: new for (old, _), (new, _) in PLUGIN_RENAMES.items()}
+        out.append("")
+        out.append("  plugins renamed to the current build:")
+        for name, n in sorted(renamed.items()):
+            out.append(f"    {name} -> {new_names[name]}   ({n} instance(s))")
 
     seen = set()
     un = [(x["composition"], u) for x in rows for u in x["unmatched"]]

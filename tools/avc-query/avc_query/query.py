@@ -290,6 +290,7 @@ def _execute_migrate(query: Query, files: list[Path], origin: str):
             "bundled": p.bundled,
             "ambiguous": p.ambiguous,
             "skipped_class": p.skipped_class,
+            "renamed": p.renamed,
             "replacements": written,
             "target": str(p.target_avc),
         })

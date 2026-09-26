@@ -24,6 +24,7 @@ across all four eras is the tail of the path, never its head.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +58,37 @@ def _bundled(stored: str) -> str | None:
     return None
 
 
+# FFGL effects whose identity changed after the comps were saved. A comp names an effect
+# by display name + 4-char uniqueTypeId, and for ISF plugins both derive from the display
+# name, so a rename orphans every saved instance. They are pointed at the current build
+# rather than carried as a legacy-named duplicate: 88383d3 renamed Flow Euler precisely so
+# its *Flo stopped colliding with Flow Inject. Parameters are stored by name; every input
+# of the old Flow Euler survives in Euler Soup, and its new inputs take their defaults.
+PLUGIN_RENAMES = {
+    ("*Flow Euler", "*Flo"): ("*Euler Soup", "*Eul"),
+    ("*voronoi_reactiv", "*vor"): ("*Voronoi Reactiv", "*Vor"),
+}
+_RENDERPASS = re.compile(r"<RenderPass\b[^>]*>")
+
+
+def rename_plugins(text: str) -> tuple[str, dict]:
+    """Rewrite renamed FFGL effects. Both the name and the ID must match, so an unrelated
+    effect that merely shares one of them is left alone. Returns (text, {old name: n})."""
+    counts: dict = {}
+
+    def fix(m: re.Match) -> str:
+        tag = m.group(0)
+        for (old_name, old_id), (new_name, new_id) in PLUGIN_RENAMES.items():
+            n_old, i_old = f' name="{old_name}"', f' uniqueTypeId="{old_id}"'
+            if n_old in tag and i_old in tag:
+                counts[old_name] = counts.get(old_name, 0) + 1
+                return (tag.replace(n_old, f' name="{new_name}"', 1)
+                           .replace(i_old, f' uniqueTypeId="{new_id}"', 1))
+        return tag
+
+    return _RENDERPASS.sub(fix, text), counts
+
+
 @dataclass
 class MigratePlan:
     source_avc: Path
@@ -66,6 +98,7 @@ class MigratePlan:
     bundled: list = field(default_factory=list)    # Resolume's own media, handled by rule
     ambiguous: list = field(default_factory=list)  # (stored, score, [targets]) — tied
     skipped_class: list = field(default_factory=list)  # matched a row not being staged
+    renamed: dict = field(default_factory=dict)    # legacy FFGL name -> instances rewritten
 
 
 def _norm(p: str) -> tuple:
@@ -124,6 +157,7 @@ def plan(source_avc: Path, stored_paths: list[str], entries: list[Entry],
     """Map every stored path onto `root`, reporting anything that cannot be placed."""
     p = MigratePlan(source_avc=source_avc, target_avc=out_dir / source_avc.name)
     root = root.rstrip("/")
+    _, p.renamed = rename_plugins(source_avc.read_bytes().decode("utf-8"))
 
     for stored in stored_paths:
         if not stored:
@@ -167,5 +201,6 @@ def apply(p: MigratePlan) -> int:
     raw = p.source_avc.read_bytes()
     text, count = _rewrite(raw.decode("utf-8"), p.mapping,
                            p.source_avc.stem, p.source_avc.stem)
+    text, _ = rename_plugins(text)
     p.target_avc.write_bytes(text.encode("utf-8"))
     return count
