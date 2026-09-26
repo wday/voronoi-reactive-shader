@@ -73,7 +73,11 @@ _RENDERPASS = re.compile(r"<RenderPass\b[^>]*>")
 
 def rename_plugins(text: str) -> tuple[str, dict]:
     """Rewrite renamed FFGL effects. Both the name and the ID must match, so an unrelated
-    effect that merely shares one of them is left alone. Returns (text, {old name: n})."""
+    effect that merely shares one of them is left alone. Returns (text, {old name: n}).
+
+    Each effect is stored twice — a DryWetEffect wrapper and the FFGLEffect inside it,
+    both carrying name and ID — and both are rewritten so the pair stays consistent.
+    Counts are per effect (the inner FFGLEffect), not per tag."""
     counts: dict = {}
 
     def fix(m: re.Match) -> str:
@@ -81,7 +85,8 @@ def rename_plugins(text: str) -> tuple[str, dict]:
         for (old_name, old_id), (new_name, new_id) in PLUGIN_RENAMES.items():
             n_old, i_old = f' name="{old_name}"', f' uniqueTypeId="{old_id}"'
             if n_old in tag and i_old in tag:
-                counts[old_name] = counts.get(old_name, 0) + 1
+                if ' type="FFGLEffect"' in tag:
+                    counts[old_name] = counts.get(old_name, 0) + 1
                 return (tag.replace(n_old, f' name="{new_name}"', 1)
                            .replace(i_old, f' uniqueTypeId="{new_id}"', 1))
         return tag
