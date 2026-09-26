@@ -154,7 +154,15 @@ def plan(source_avc: Path, stored_paths: list[str], entries: list[Entry],
 
 def apply(p: MigratePlan) -> int:
     """Write the rewritten composition. The stem is unchanged: this is the same
-    composition on another machine, not a new version of it."""
+    composition on another machine, not a new version of it.
+
+    Because the name is unchanged, an --out-dir equal to the folder being read would
+    write over the original. Refuse that rather than trusting the caller to notice.
+    """
+    if p.target_avc.resolve() == p.source_avc.resolve():
+        raise ValueError(
+            f"refusing to overwrite the original {p.source_avc}: "
+            "--out-dir must differ from the compositions being read")
     p.target_avc.parent.mkdir(parents=True, exist_ok=True)
     raw = p.source_avc.read_bytes()
     text, count = _rewrite(raw.decode("utf-8"), p.mapping,

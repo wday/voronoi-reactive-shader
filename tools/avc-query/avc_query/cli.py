@@ -12,7 +12,9 @@ from .query import execute, parse_query
 
 COMPOSITIONS_DIR = os.environ.get(
     "AVC_COMPOSITIONS_DIR",
-    "/mnt/c/Users/alien/Documents/Resolume Avenue/Compositions",
+    os.path.expanduser("~/Documents/Resolume Avenue/Compositions")
+    if sys.platform == "darwin"
+    else "/mnt/c/Users/alien/Documents/Resolume Avenue/Compositions",
 )
 
 
