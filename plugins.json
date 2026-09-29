@@ -8,6 +8,13 @@
       "dll": "voronoi_reactive.dll"
     },
     {
+      "name": "voronoi_fractal",
+      "display_name": "Voronoi Fract v2",
+      "type": "rust",
+      "crate": "voronoi-fractal",
+      "dll": "voronoi_fractal.dll"
+    },
+    {
       "name": "video_looper",
       "type": "rust",
       "crate": "video-looper",
@@ -30,7 +37,8 @@
       "display_name": "Delay Core (shared lib)",
       "type": "rust",
       "crate": "delay-core",
-      "dll": "delay_core.dll"
+      "dll": "delay_core.dll",
+      "shared_lib": true
     },
     {
       "name": "delay_write",
@@ -51,6 +59,13 @@
       "type": "rust",
       "crate": "mirror-transform",
       "dll": "mirror_transform.dll"
+    },
+    {
+      "name": "transform_3d",
+      "display_name": "Transform 3D",
+      "type": "rust",
+      "crate": "transform-3d",
+      "dll": "transform_3d.dll"
     },
     {
       "name": "logistic_feedback",
@@ -76,6 +91,27 @@
       "type": "rust",
       "crate": "slipgrid",
       "dll": "slipgrid.dll"
+    },
+    {
+      "name": "contour_field",
+      "display_name": "Contour Field",
+      "type": "rust",
+      "crate": "contour-field",
+      "dll": "contour_field.dll"
+    },
+    {
+      "name": "dendritic_network",
+      "display_name": "Dendritic Network",
+      "type": "rust",
+      "crate": "dendritic-network",
+      "dll": "dendritic_network.dll"
+    },
+    {
+      "name": "parcel_subdivision",
+      "display_name": "Parcel Subdivision",
+      "type": "rust",
+      "crate": "parcel-subdivision",
+      "dll": "parcel_subdivision.dll"
     },
     {
       "name": "stereo_depth",
@@ -117,7 +153,8 @@
       "display_name": "Varispeed Core (shared lib)",
       "type": "rust",
       "crate": "varispeed-core",
-      "dll": "varispeed_core.dll"
+      "dll": "varispeed_core.dll",
+      "shared_lib": true
     },
     {
       "name": "varispeed_write",

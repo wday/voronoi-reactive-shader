@@ -38,8 +38,16 @@ uniform float u_dry;              // gain on live input
 uniform float u_wet;              // gain on buffer
 uniform float u_gamma;            // blend-space exponent (1.0 = perceptual)
 
+// Clamp the sampled content half a texel inside the outer content texel centres,
+// so bilinear never blends the last real row/col with the black NPOT padding
+// (a 1px dark edge seam) into the live/dry signal. texel from textureSize.
+vec4 sampleContent(vec2 uv) {
+    vec2 texel = 1.0 / vec2(textureSize(u_input, 0));
+    return texture(u_input, clamp(uv * u_uv_scale, 0.5 * texel, u_uv_scale - 0.5 * texel));
+}
+
 void main() {
-    vec4 live = texture(u_input, v_uv * u_uv_scale);
+    vec4 live = sampleContent(v_uv);
     vec4 buf  = texture(u_buffer, vec3(v_uv, u_layer));
 
     if (u_gamma == 1.0) {

@@ -148,6 +148,7 @@ pub struct SlipgridShader {
     loc_mode: GLint,
     loc_seed: GLint,
     loc_dry_wet: GLint,
+    loc_texel: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -161,6 +162,7 @@ pub struct SlipgridUniforms {
     pub seed: f32,
     pub dry_wet: f32,
     pub uv_scale: [f32; 2],
+    pub texel: [f32; 2],
 }
 
 impl SlipgridShader {
@@ -179,6 +181,7 @@ impl SlipgridShader {
         let loc_mode = program.uniform_loc("u_mode");
         let loc_seed = program.uniform_loc("u_seed");
         let loc_dry_wet = program.uniform_loc("u_dry_wet");
+        let loc_texel = program.uniform_loc("u_texel");
 
         Self {
             program,
@@ -192,6 +195,7 @@ impl SlipgridShader {
             loc_mode,
             loc_seed,
             loc_dry_wet,
+            loc_texel,
             quad,
         }
     }
@@ -211,6 +215,7 @@ impl SlipgridShader {
             gl::Uniform1i(self.loc_mode, u.mode);
             gl::Uniform1f(self.loc_seed, u.seed);
             gl::Uniform1f(self.loc_dry_wet, u.dry_wet);
+            gl::Uniform2f(self.loc_texel, u.texel[0], u.texel[1]);
         }
         self.quad.draw();
         unsafe {

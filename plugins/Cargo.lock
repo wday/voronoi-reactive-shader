@@ -136,6 +136,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "contour-field"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -217,6 +227,16 @@ dependencies = [
  "gl",
  "gl_loader",
  "pluglib",
+ "tracing",
+]
+
+[[package]]
+name = "dendritic-network"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
  "tracing",
 ]
 
@@ -514,6 +534,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
+name = "parcel-subdivision"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -762,6 +792,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "transform-3d"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
+ "tracing",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -828,6 +868,16 @@ dependencies = [
  "gl",
  "gl_loader",
  "midir",
+ "tracing",
+]
+
+[[package]]
+name = "voronoi-fractal"
+version = "0.1.0"
+dependencies = [
+ "ffgl-core",
+ "gl",
+ "gl_loader",
  "tracing",
 ]
 

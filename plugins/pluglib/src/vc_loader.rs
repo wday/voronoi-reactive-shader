@@ -9,15 +9,23 @@ use std::ffi::c_void;
 use std::sync::OnceLock;
 
 /// Bound varispeed-core entry points. Signatures MUST match varispeed-core's `vc_*`.
+///
+/// Every tape-addressing call takes a leading `channel` (VS-CHANNELS); an
+/// out-of-range channel is a no-op returning a zero value.
 pub struct VcApi {
     pub depth: extern "C" fn() -> u32,
-    pub acquire: extern "C" fn(),
-    pub release: extern "C" fn(),
-    pub write_tick: extern "C" fn(u32, u32, u64) -> u64,
-    pub record_index: extern "C" fn() -> u64,
-    pub tex: extern "C" fn() -> u32,
-    pub set_loop_slot: extern "C" fn(u32, u64),
-    pub loop_slot: extern "C" fn(u64) -> i64,
+    pub channels: extern "C" fn() -> u32,
+    pub acquire: extern "C" fn(u32),
+    pub release: extern "C" fn(u32),
+    pub write_tick: extern "C" fn(u32, u32, u32, u64) -> u64,
+    pub record_index: extern "C" fn(u32) -> u64,
+    pub tex: extern "C" fn(u32) -> u32,
+    // (channel, owner, slot, len, frame_id) — owner and len added for
+    // VS-CONFINED-RESEED. Signatures must stay in lockstep with varispeed-core,
+    // so core/read/write deploy together.
+    pub set_loop_slot: extern "C" fn(u32, u64, u32, u32, u64),
+    pub loop_slot: extern "C" fn(u32, u64) -> i64,
+    pub loop_len: extern "C" fn(u32, u64) -> i64,
 }
 unsafe impl Sync for VcApi {}
 unsafe impl Send for VcApi {}
@@ -85,6 +93,7 @@ fn load() -> VcApi {
         }
         VcApi {
             depth: proc!("vc_depth"),
+            channels: proc!("vc_channels"),
             acquire: proc!("vc_acquire"),
             release: proc!("vc_release"),
             write_tick: proc!("vc_write_tick"),
@@ -92,6 +101,7 @@ fn load() -> VcApi {
             tex: proc!("vc_tex"),
             set_loop_slot: proc!("vc_set_loop_slot"),
             loop_slot: proc!("vc_loop_slot"),
+            loop_len: proc!("vc_loop_len"),
         }
     }
 }
@@ -131,7 +141,7 @@ fn load() -> VcApi {
         let ok = dladdr(marker as *const c_void, &mut info);
         assert!(ok != 0 && !info.dli_fname.is_null(), "dladdr failed for plugin module");
         let path = PathBuf::from(CStr::from_ptr(info.dli_fname).to_string_lossy().into_owned());
-        let dir = path.parent().expect("plugin module has no parent dir");
+        let dir = crate::core_dir(&path);
 
         let core = dir.join(CORE_FILE);
         let core_c = CString::new(core.to_string_lossy().as_bytes()).unwrap();
@@ -148,6 +158,7 @@ fn load() -> VcApi {
         }
         VcApi {
             depth: proc!("vc_depth"),
+            channels: proc!("vc_channels"),
             acquire: proc!("vc_acquire"),
             release: proc!("vc_release"),
             write_tick: proc!("vc_write_tick"),
@@ -155,6 +166,7 @@ fn load() -> VcApi {
             tex: proc!("vc_tex"),
             set_loop_slot: proc!("vc_set_loop_slot"),
             loop_slot: proc!("vc_loop_slot"),
+            loop_len: proc!("vc_loop_len"),
         }
     }
 }

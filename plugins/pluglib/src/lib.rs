@@ -13,6 +13,51 @@ mod vc_loader;
 pub use loader::{api, Api};
 pub use vc_loader::{vc_api, VcApi};
 
+/// The directory the shared cores live in, given this plugin's own module path.
+///
+/// On macOS Resolume loads `<Name>.bundle/Contents/MacOS/<Name>`. Looking next to
+/// that binary would give every bundle its own core — and a Write and its Tap/Read
+/// would stop sharing one registry. So a module inside a bundle looks in the folder
+/// that holds the bundle (Extra Effects), where the core dylibs are deployed loose.
+#[cfg(unix)]
+pub(crate) fn core_dir(module: &std::path::Path) -> &std::path::Path {
+    let dir = module.parent().expect("plugin module has no parent dir");
+    let bundle = dir
+        .parent()
+        .filter(|_| dir.ends_with("MacOS"))
+        .filter(|contents| contents.ends_with("Contents"))
+        .and_then(|contents| contents.parent())
+        .filter(|b| b.extension().is_some_and(|e| e == "bundle"));
+    match bundle.and_then(|b| b.parent()) {
+        Some(effects) => effects,
+        None => dir,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod core_dir_tests {
+    use super::core_dir;
+    use std::path::Path;
+
+    #[test]
+    fn bundle_binary_looks_beside_the_bundle() {
+        let m = Path::new("/U/Extra Effects/Delay Tap.bundle/Contents/MacOS/delay_tap");
+        assert_eq!(core_dir(m), Path::new("/U/Extra Effects"));
+    }
+
+    #[test]
+    fn loose_library_looks_beside_itself() {
+        let m = Path::new("/build/target/release/libdelay_tap.dylib");
+        assert_eq!(core_dir(m), Path::new("/build/target/release"));
+    }
+
+    #[test]
+    fn macos_dir_outside_a_bundle_is_not_special() {
+        let m = Path::new("/x/Contents/MacOS/plugin");
+        assert_eq!(core_dir(m), Path::new("/x/Contents/MacOS"));
+    }
+}
+
 use gl::types::*;
 use std::ffi::CString;
 use std::ptr;

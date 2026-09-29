@@ -11,8 +11,8 @@
 //! tick entirely, so the cursor parks and the buffer is held — the Read then loops
 //! the captured window (varispeed playback). This is NOT the delay's Send=0 wipe.
 //!
-//! The tape is stored at half resolution (`TAPE_SCALE`) + RGBA16F (VS-STORAGE); the
-//! passthrough output stays full-res.
+//! The tape is stored at full resolution (`TAPE_SCALE` = 1.0) + RGBA16F
+//! (VS-STORAGE); the passthrough output is full-res too.
 
 mod params;
 mod shader;
@@ -26,9 +26,20 @@ use params::{WriteParams, NUM_PARAMS};
 use pluglib::vc_api;
 use shader::WriteShaders;
 
-/// Linear resolution scale for the stored tape (half width/height = a quarter of
-/// the pixels), so the RGBA16F tape stays affordable (VS-STORAGE / WRITE-TAPE-SCALE).
-const TAPE_SCALE: f32 = 0.5;
+/// Linear resolution scale for the stored tape. 1.0 = stored at the full frame
+/// resolution, so nothing in the loop is spatially resampled.
+///
+/// Was 0.5 (a quarter of the pixels) to keep the 480-layer tape near 2 GB. The
+/// cost only showed up in feedback: that downscale plus the Read's bilinear
+/// magnify gave the loop a round-trip gain of roughly 0.35 at high spatial
+/// frequencies, so fine detail decayed ~3x faster per lap than the image as a
+/// whole and tight fractal feedback mushed into blobs. Paid for by halving
+/// `BUFFER_DEPTH` to 240 (VS-STORAGE / WRITE-TAPE-SCALE).
+///
+/// NOTE: this only removes the *spatial* per-lap loss. `read.frag.glsl` also does
+/// a temporal `mix()` between bracketing frames, which is a second lowpass
+/// whenever the read head sits between frames (Rate ±1/2x, or any Warp Depth > 0).
+const TAPE_SCALE: f32 = 1.0;
 
 /// Host-provided per-frame id for the write-cursor barrier: host_time as whole ms.
 fn frame_id(data: &FFGLData) -> u64 {
@@ -44,6 +55,9 @@ pub struct VarispeedWrite {
     /// This plugin's own FBO; the shared buffer layer is attached per draw.
     fbo: GLuint,
     frame_count: u64,
+    /// The channel `vc_acquire` was called for, so a Channel change can rebalance
+    /// the refcount (mirrors DelayWrite).
+    acquired_channel: u32,
 }
 
 impl VarispeedWrite {
@@ -60,6 +74,7 @@ impl VarispeedWrite {
         host_viewport: [GLint; 4],
     ) {
         let vc = vc_api();
+        let ch = self.params.channel();
         let uv_scale = [width as f32 / hw_width as f32, height as f32 / hw_height as f32];
         let send = self.params.send();
         let shaders = self.shaders.as_ref().unwrap();
@@ -68,33 +83,47 @@ impl VarispeedWrite {
         // record cursor parks and the buffer is kept — that IS the freeze (the Read
         // then loops the captured window).
         if send > 0.0 {
-            // Tape stored at reduced resolution (half-res RGBA16F). Downscale the
-            // sizing dims; varispeed-core allocs the tape at exactly these.
+            // Tape stored at full resolution (TAPE_SCALE = 1.0) RGBA16F; these are
+            // the sizing dims varispeed-core allocs the tape at exactly.
             let tape_w = ((width as f32 * TAPE_SCALE).round() as u32).max(1);
             let tape_h = ((height as f32 * TAPE_SCALE).round() as u32).max(1);
             let fid = frame_id(data);
-            let record_index = (vc.write_tick)(tape_w, tape_h, fid);
-            let tex = (vc.tex)();
+            let record_index = (vc.write_tick)(ch, tape_w, tape_h, fid);
+            let tex = (vc.tex)(ch);
             let depth = (vc.depth)();
 
             if tex != 0 && depth != 0 {
                 // Confine mode: the Read published the slot its play head sits on —
                 // record the FX'd input back into it (in-place loop feedback). Free
                 // mode (no slot published this frame): append at the write cursor.
-                let confined = (vc.loop_slot)(fid);
-                let wp = if confined >= 0 {
-                    (confined as u32) % depth
-                } else {
-                    (record_index % depth as u64) as u32
-                };
-                unsafe {
+                let confined = (vc.loop_slot)(ch, fid);
+                let append = (record_index % depth as u64) as u32;
+                let wp = if confined >= 0 { (confined as u32) % depth } else { append };
+
+                let record = |layer: u32| unsafe {
                     gl::BindFramebuffer(gl::FRAMEBUFFER, self.fbo);
-                    gl::FramebufferTextureLayer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, tex, 0, wp as i32);
+                    gl::FramebufferTextureLayer(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, tex, 0, layer as i32);
                     // Viewport = tape (downscaled) dims; uv_scale still maps to the
                     // full-res input → a full-frame downsample into the smaller layer.
                     gl::Viewport(0, 0, tape_w as i32, tape_h as i32);
+                    shaders.write_pass(input_tex, uv_scale, send);
+                };
+                record(wp);
+
+                // VS-CONFINED-SWEEP. In Confine mode the write above lands inside the
+                // fixed [0, L) window, so the rest of the ring is never refreshed —
+                // while `record_index` keeps advancing, so any Free Read on this
+                // channel reads slots nobody writes and replays whatever ancient
+                // content is in them. Sweep the free-ring slot too, skipping the
+                // Confined window itself so the in-place accumulation is not
+                // clobbered (VS-CONFINED-STABLE).
+                if confined >= 0 {
+                    let len = (vc.loop_len)(ch, fid);
+                    let inside = len > 0 && (append as i64) < len;
+                    if !inside && append != wp {
+                        record(append);
+                    }
                 }
-                shaders.write_pass(input_tex, uv_scale, send);
             }
         }
 
@@ -113,13 +142,14 @@ impl SimpleFFGLInstance for VarispeedWrite {
         gl::load_with(|s| gl_loader::get_proc_address(s).cast());
         let _ = inst_data;
 
-        (vc_api().acquire)();
+        (vc_api().acquire)(0);
 
         Self {
             params: WriteParams::new(),
             shaders: None,
             fbo: 0,
             frame_count: 0,
+            acquired_channel: 0,
         }
     }
 
@@ -209,6 +239,15 @@ impl SimpleFFGLInstance for VarispeedWrite {
 
     fn set_param(&mut self, index: usize, value: f32) {
         self.params.set(index, value);
+        if index == params::PARAM_CHANNEL {
+            let new_ch = self.params.channel();
+            if new_ch != self.acquired_channel {
+                let vc = vc_api();
+                (vc.release)(self.acquired_channel);
+                (vc.acquire)(new_ch);
+                self.acquired_channel = new_ch;
+            }
+        }
     }
 
     fn plugin_info() -> ffgl_core::info::PluginInfo {
@@ -226,7 +265,7 @@ impl Drop for VarispeedWrite {
     fn drop(&mut self) {
         // Release the tape refcount. No GL here (context may not be current); the
         // FBO name leaks until process exit, matching the delay plugins.
-        (vc_api().release)();
+        (vc_api().release)(self.acquired_channel);
     }
 }
 

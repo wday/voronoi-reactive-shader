@@ -13,5 +13,5 @@
 pub mod read_head;
 pub mod warp;
 
-pub use read_head::{advance_age, advance_head, confined_slot, sample_age, sample_block, sample_confined, Sample};
+pub use read_head::{advance_age, advance_head, anchor_age, confined_slot, sample_age, sample_confined, Sample};
 pub use warp::warp_offset;

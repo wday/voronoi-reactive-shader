@@ -22,8 +22,10 @@ const SUBDIVISIONS: [(&str, f32); 7] = [
     ("4 bars", 16.0),
 ];
 
-const MAX_DELAY_MS: f32 = 4000.0;
-const MAX_DELAY_FRAMES: u32 = 239;
+// Both track delay-core's BUFFER_DEPTH (120): the longest addressable loop is
+// BUFFER_DEPTH - 1 frames, which is 2 s at 60 fps.
+const MAX_DELAY_MS: f32 = 2000.0;
+const MAX_DELAY_FRAMES: u32 = 119;
 
 static PARAM_INFOS: LazyLock<[SimpleParamInfo; NUM_PARAMS]> = LazyLock::new(|| {
     [

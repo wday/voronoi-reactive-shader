@@ -22,7 +22,13 @@ use std::sync::{Mutex, Once};
 use delay_dsp::Ring;
 
 /// Ring-buffer depth (layers of the 2D texture array). Caps the maximum loop.
-const BUFFER_DEPTH: u32 = 240;
+///
+/// 120 layers = 2 s at 60 fps. That is well past the 1/16..1/4-note (and 2-3
+/// frame) loops this actually gets played at, and halving it from the old 240 is
+/// what pays for the tape going full-res (`WRITE-TAPE-SCALE` = 1.0): at 1080p
+/// RGBA16F that is ~2 GB/channel, ~4 GB with both channels live, on a 12 GB card.
+/// Subdivisions longer than ~1 bar now clamp here instead of at 240.
+const BUFFER_DEPTH: u32 = 120;
 
 /// Number of shared channels. NOTE: kept a constant, not baked into assumptions —
 /// raising it is a planned fast-follow. `REGISTRY`'s initializer below must be
@@ -263,8 +269,8 @@ pub extern "C" fn dc_buf_size(channel: usize) -> u32 {
 /// the texture name, or 0 on GL error. Float storage removes the 8-bit banding in
 /// the (linear-blended) feedback tail and holds values with headroom; over-unity
 /// still can't persist across laps because the loop clips at Resolume's host FBO
-/// (see DEFER-FLOAT). The Write stores at reduced resolution (its TAPE_SCALE), so
-/// a full 240-layer tape stays ~1 GB/channel at 1080p. FBOs are NOT created here —
+/// (see DEFER-FLOAT). The Write sizes the tape by its TAPE_SCALE, now 1.0, so a
+/// full 120-layer tape is ~2 GB/channel at 1080p. FBOs are NOT created here —
 /// each plugin owns its own FBO and attaches this texture's layers to it, so only
 /// the (process-shared) texture name crosses the DLL boundary.
 fn alloc_buffer(width: u32, height: u32) -> GLuint {
@@ -305,8 +311,8 @@ fn alloc_buffer(width: u32, height: u32) -> GLuint {
 }
 
 /// Clear every layer of the ring's 2D texture array to transparent black,
-/// GPU-side: an FBO + `glClear` per layer, no multi-GB CPU upload (240 layers of
-/// 1080p RGBA8 would be ~2 GB to stream otherwise). Used on allocation and on any
+/// GPU-side: an FBO + `glClear` per layer, no multi-GB CPU upload (120 layers of
+/// full-res 1080p RGBA16F would be ~2 GB to stream otherwise). Used on allocation and on any
 /// loop-length change (the modulus change scrambles the temporal mapping of every
 /// slot, so the whole tape must reseed).
 ///

@@ -134,6 +134,7 @@ pub struct LogisticShader {
     loc_spatial_mode: GLint,
     loc_dry_wet: GLint,
     loc_texel_size: GLint,
+    loc_uv_scale: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -149,6 +150,7 @@ impl LogisticShader {
         let loc_spatial_mode = program.uniform_loc("u_spatial_mode");
         let loc_dry_wet = program.uniform_loc("u_dry_wet");
         let loc_texel_size = program.uniform_loc("u_texel_size");
+        let loc_uv_scale = program.uniform_loc("u_uv_scale");
 
         Self {
             program,
@@ -158,6 +160,7 @@ impl LogisticShader {
             loc_spatial_mode,
             loc_dry_wet,
             loc_texel_size,
+            loc_uv_scale,
             quad,
         }
     }
@@ -169,6 +172,7 @@ impl LogisticShader {
         sensitivity: f32,
         spatial_mode: i32,
         dry_wet: f32,
+        uv_scale: [f32; 2],
     ) {
         // Query input texture dimensions for texel size
         let (mut tex_w, mut tex_h) = (1i32, 1i32);
@@ -192,6 +196,7 @@ impl LogisticShader {
                 1.0 / tex_w as f32,
                 1.0 / tex_h as f32,
             );
+            gl::Uniform2f(self.loc_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {

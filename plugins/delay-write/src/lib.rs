@@ -28,14 +28,21 @@ use params::{SyncMode, WriteParams, NUM_PARAMS};
 use pluglib::api;
 use shader::WriteShaders;
 
-/// Linear resolution scale for the stored tape. 0.5 = half width/height = a
-/// quarter of the pixels, so the RGBA16F float tape (8 bytes/texel) costs about
-/// half of a full-res RGBA8 one while removing banding — the chosen Crisp↔Deep
-/// point (see CORE-FORMAT / WRITE-TAPE-SCALE). Only the recorded loop is
-/// downscaled; the passthrough output stays full-res. In feedback the Wet path
-/// re-downsamples every lap → progressive softening, while Dry injection stays
-/// crisp. Raise toward 1.0 for a sharper (heavier) tape.
-const TAPE_SCALE: f32 = 0.5;
+/// Linear resolution scale for the stored tape. 1.0 = the tape is stored at the
+/// full frame resolution, so nothing in the delay loop is resampled.
+///
+/// This was 0.5 (a quarter of the pixels) to hold a 240-layer tape near 1 GB per
+/// channel. The cost only showed up in feedback: the downscale here plus the
+/// Tap's bilinear magnify on read gave the loop a round-trip gain of roughly 0.35
+/// at high spatial frequencies, so fine detail decayed about 3x faster per lap
+/// than the image as a whole. Goopy fluid feedback liked that; tight fractal
+/// feedback mushed into blobs within a few laps. With BUFFER_DEPTH cut to 120
+/// (2 s at 60 fps — past the loop lengths this is played at) full res costs
+/// ~2 GB/channel at 1080p, which fits in the VRAM budget.
+///
+/// Softening is now an intentional, sweepable effect on the Tap's read rather
+/// than a property of the tape. Lower this only to buy VRAM back (e.g. at 4K).
+const TAPE_SCALE: f32 = 1.0;
 
 /// Host-provided per-frame id for the frame barrier: host_time as whole ms.
 /// Shared by every instance drawn in the same host frame (if Resolume sets it).

@@ -133,6 +133,7 @@ pub struct DisplaceShader {
     loc_pattern: GLint,
     loc_angle: GLint,
     loc_dry_wet: GLint,
+    loc_uv_scale: GLint,
     pub quad: QuadGeometry,
 }
 
@@ -147,6 +148,7 @@ impl DisplaceShader {
         let loc_pattern = program.uniform_loc("u_pattern");
         let loc_angle = program.uniform_loc("u_angle");
         let loc_dry_wet = program.uniform_loc("u_dry_wet");
+        let loc_uv_scale = program.uniform_loc("u_uv_scale");
 
         Self {
             program,
@@ -155,6 +157,7 @@ impl DisplaceShader {
             loc_pattern,
             loc_angle,
             loc_dry_wet,
+            loc_uv_scale,
             quad,
         }
     }
@@ -166,6 +169,7 @@ impl DisplaceShader {
         pattern: i32,
         angle: f32,
         dry_wet: f32,
+        uv_scale: [f32; 2],
     ) {
         self.program.use_program();
         unsafe {
@@ -176,6 +180,7 @@ impl DisplaceShader {
             gl::Uniform1i(self.loc_pattern, pattern);
             gl::Uniform1f(self.loc_angle, angle);
             gl::Uniform1f(self.loc_dry_wet, dry_wet);
+            gl::Uniform2f(self.loc_uv_scale, uv_scale[0], uv_scale[1]);
         }
         self.quad.draw();
         unsafe {
