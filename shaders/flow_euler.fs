@@ -12,7 +12,9 @@
     { "NAME": "flowScale",   "TYPE": "float", "LABEL": "Flow Scale",   "DEFAULT": 0.05, "MIN": 0.0, "MAX": 0.2 },
     { "NAME": "curlStrength","TYPE": "float", "LABEL": "Curl / Vorticity", "DEFAULT": 0.6, "MIN": 0.0, "MAX": 3.0 },
     { "NAME": "stir",        "TYPE": "float", "LABEL": "Turbulence",   "DEFAULT": 0.6,  "MIN": 0.0, "MAX": 3.0 },
-    { "NAME": "churn",       "TYPE": "float", "LABEL": "Churn",        "DEFAULT": 0.0,  "MIN": 0.0, "MAX": 1.0 },
+    { "NAME": "churn",       "TYPE": "float", "LABEL": "Churn",        "DEFAULT": 0.0,  "MIN": 0.0, "MAX": 2.0 },
+    { "NAME": "seed",        "TYPE": "float", "LABEL": "Seed",         "DEFAULT": 0.0,  "MIN": 0.0, "MAX": 1.0 },
+    { "NAME": "reset",       "TYPE": "event", "LABEL": "Reset" },
     { "NAME": "viscosity",   "TYPE": "float", "LABEL": "Viscosity",    "DEFAULT": 0.12, "MIN": 0.0, "MAX": 1.0 },
     { "NAME": "dt",          "TYPE": "float", "LABEL": "Sim Rate",     "DEFAULT": 0.5,  "MIN": 0.01,"MAX": 2.0 },
 
@@ -46,7 +48,12 @@
 //     Churn: advection backtraces in 1–6 substeps along the curved
 //     streamline instead of one straight jump. The truer self-advection
 //     loses less momentum to resampling, so the flow stays more energetic
-//     and folds into more, finer creases.
+//     and folds into more, finer creases. Above 1 it also eases velocity
+//     damping and scales vorticity confinement up to 2x — wilder shards.
+//     Seed: per-pixel, per-frame velocity noise. With stir 0 nothing else starts
+//     motion, so Seed makes a stir-0 look (e.g. curl-sustained cells) come back
+//     from settings alone instead of from leftover state. Reset (held) wipes
+//     velocity and refills the dye from the input.
 //   dyeA/dyeB (ping-pong): RGB dye = the input colour, carried along the
 //     velocity field's currents. This is what you see — watery, not blurry,
 //     because the velocity field has memory and forms coherent eddies.
@@ -84,13 +91,19 @@ vec4 sampleDyeB(vec2 uv) { if (!applyBoundary(uv)) return vec4(0.0); return IMG_
 // Backtrace uv (scale = UV per unit velocity) through velA in Churn-many substeps,
 // adding the constant `drift` (already in velocity units). Returns source UV.
 vec2 backtrace(vec2 uv, vec2 drift, vec2 scale) {
-    int n = 1 + int(churn * 5.0 + 0.5);
+    int n = 1 + int(min(churn, 1.0) * 5.0 + 0.5);
     float h = 1.0 / float(n);
     for (int i = 0; i < 6; i++) {
         if (i >= n) break;
         uv -= (sampleVelA(uv).rg + drift) * scale * h;
     }
     return uv;
+}
+
+vec2 hash22(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.xx + q.yz) * q.zy);
 }
 
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -118,6 +131,11 @@ void main() {
     // Velocity is in frame-height units: scale x so a displacement covers the
     // same pixels horizontally as vertically (UV x spans more pixels when W > H).
     vec2 aspect = vec2(RENDERSIZE.y / RENDERSIZE.x, 1.0);
+
+    if (reset) {
+        if (PASSINDEX <= 1) { gl_FragColor = vec4(0.0); return; }
+        if (PASSINDEX == 2) { gl_FragColor = vec4(IMG_NORM_PIXEL(inputImage, uv).rgb, 1.0); return; }
+    }
 
     // ==================================================================
     // SOUP MODE — stable-fluid + dye
@@ -162,10 +180,15 @@ void main() {
             vec2 g = vec2(luma(dR) - luma(dL), luma(dU) - luma(dD)) * 0.5;
             vec2 stirForce = vec2(-g.y, g.x) * stir;
 
-            v += (curlForce + stirForce) * dt;
+            float over = clamp(churn - 1.0, 0.0, 1.0);   // Churn 1→2
+            v += (curlForce * (1.0 + over) + stirForce) * dt;
+
+            // Seed — white velocity noise; curl confinement organises it.
+            if (seed > 0.0)
+                v += (hash22(gl_FragCoord.xy + float(FRAMEINDEX) * vec2(37.0, 17.0)) * 2.0 - 1.0) * seed;
 
             // Damp + clamp so the field stays energetic but bounded.
-            v *= 0.985;
+            v *= mix(0.985, 0.995, over);
             v = clamp(v, -3.0, 3.0);
 
             gl_FragColor = vec4(v, curl, 1.0);
