@@ -12,6 +12,7 @@
     { "NAME": "flowScale",   "TYPE": "float", "LABEL": "Flow Scale",   "DEFAULT": 0.05, "MIN": 0.0, "MAX": 0.2 },
     { "NAME": "curlStrength","TYPE": "float", "LABEL": "Curl / Vorticity", "DEFAULT": 0.6, "MIN": 0.0, "MAX": 3.0 },
     { "NAME": "stir",        "TYPE": "float", "LABEL": "Turbulence",   "DEFAULT": 0.6,  "MIN": 0.0, "MAX": 3.0 },
+    { "NAME": "churn",       "TYPE": "float", "LABEL": "Churn",        "DEFAULT": 0.0,  "MIN": 0.0, "MAX": 1.0 },
     { "NAME": "viscosity",   "TYPE": "float", "LABEL": "Viscosity",    "DEFAULT": 0.12, "MIN": 0.0, "MAX": 1.0 },
     { "NAME": "dt",          "TYPE": "float", "LABEL": "Sim Rate",     "DEFAULT": 0.5,  "MIN": 0.01,"MAX": 2.0 },
 
@@ -42,6 +43,10 @@
 //   velA/velB (ping-pong): velocity field. RG = velocity, B = curl.
 //     Self-advects (momentum), vorticity confinement (Curl), viscosity,
 //     and an image-gradient "Turbulence" force that stirs the fluid.
+//     Churn: advection backtraces in 1–6 substeps along the curved
+//     streamline instead of one straight jump. The truer self-advection
+//     loses less momentum to resampling, so the flow stays more energetic
+//     and folds into more, finer creases.
 //   dyeA/dyeB (ping-pong): RGB dye = the input colour, carried along the
 //     velocity field's currents. This is what you see — watery, not blurry,
 //     because the velocity field has memory and forms coherent eddies.
@@ -53,14 +58,19 @@
 //   P3 dyeB→dyeA, P4 output. After a frame velA & dyeA hold current state.
 // -----------------------------------------------------------------------
 
+// Pass targets sample with Repeat wrap (host), which is seamless for Wrap. Reflect
+// and Absorb clamp to the edge texel centres so bilinear reads there don't blend
+// in the opposite edge.
 bool applyBoundary(inout vec2 uv) {
+    vec2 h = 0.5 / RENDERSIZE;
     if (boundaryMode == 0) {
         uv = fract(uv);
     } else if (boundaryMode == 1) {
-        uv = 1.0 - abs(mod(uv, 2.0) - 1.0);
+        uv = clamp(1.0 - abs(mod(uv, 2.0) - 1.0), h, 1.0 - h);
     } else {
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
             return false;
+        uv = clamp(uv, h, 1.0 - h);
     }
     return true;
 }
@@ -70,6 +80,18 @@ vec4 sampleVelA(vec2 uv) { if (!applyBoundary(uv)) return vec4(0.0); return IMG_
 vec4 sampleVelB(vec2 uv) { if (!applyBoundary(uv)) return vec4(0.0); return IMG_NORM_PIXEL(velB, uv); }
 vec4 sampleDyeA(vec2 uv) { if (!applyBoundary(uv)) return vec4(0.0); return IMG_NORM_PIXEL(dyeA, uv); }
 vec4 sampleDyeB(vec2 uv) { if (!applyBoundary(uv)) return vec4(0.0); return IMG_NORM_PIXEL(dyeB, uv); }
+
+// Backtrace uv (scale = UV per unit velocity) through velA in Churn-many substeps,
+// adding the constant `drift` (already in velocity units). Returns source UV.
+vec2 backtrace(vec2 uv, vec2 drift, vec2 scale) {
+    int n = 1 + int(churn * 5.0 + 0.5);
+    float h = 1.0 / float(n);
+    for (int i = 0; i < 6; i++) {
+        if (i >= n) break;
+        uv -= (sampleVelA(uv).rg + drift) * scale * h;
+    }
+    return uv;
+}
 
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
@@ -93,6 +115,9 @@ void main() {
     vec2 px = 1.0 / RENDERSIZE;
     vec2 dx = vec2(px.x, 0.0);
     vec2 dy = vec2(0.0, px.y);
+    // Velocity is in frame-height units: scale x so a displacement covers the
+    // same pixels horizontally as vertically (UV x spans more pixels when W > H).
+    vec2 aspect = vec2(RENDERSIZE.y / RENDERSIZE.x, 1.0);
 
     // ==================================================================
     // SOUP MODE — stable-fluid + dye
@@ -111,7 +136,7 @@ void main() {
             vec4 vD = sampleVelA(uv - dy);
 
             // Self-advection (momentum): carry velocity along itself.
-            vec2 v = sampleVelA(uv - vC.rg * flowScale).rg;
+            vec2 v = sampleVelA(backtrace(uv, vec2(0.0), flowScale * aspect)).rg;
 
             // Curl of the velocity field.
             float curl = ((vR.g - vL.g) - (vU.r - vD.r)) * 0.5;
@@ -151,8 +176,9 @@ void main() {
         } else if (PASSINDEX == 1) {
 
             vec4 c = sampleVelB(uv);
-            vec2 lap = (sampleVelB(uv + dx).rg + sampleVelB(uv - dx).rg
-                      + sampleVelB(uv + dy).rg + sampleVelB(uv - dy).rg) * 0.25 - c.rg;
+            vec4 R = sampleVelB(uv + dx), L = sampleVelB(uv - dx);
+            vec4 U = sampleVelB(uv + dy), D = sampleVelB(uv - dy);
+            vec2 lap = (R.rg + L.rg + U.rg + D.rg) * 0.25 - c.rg;
             vec2 v = c.rg + lap * viscosity;
             gl_FragColor = vec4(v, c.b, 1.0);
 
@@ -161,12 +187,11 @@ void main() {
         // -------------------------------------------------------------
         } else if (PASSINDEX == 2) {
 
-            vec2 vel = sampleVelA(uv).rg;
             float theta = flowAngle * 6.28318530718;
             vec2 global = vec2(cos(theta), sin(theta)) * flowSpeed;
 
             // Semi-Lagrangian: where did this dye come from?
-            vec2 srcUV = uv - (vel + global) * flowScale;
+            vec2 srcUV = backtrace(uv, global, flowScale * aspect);
             vec3 col = sampleDyeA(srcUV).rgb * decayRate;
 
             // Inject fresh input (or the delayed feedback signal).
@@ -240,7 +265,7 @@ void main() {
         } else if (PASSINDEX == 1) {
 
             vec4 s = sampleVelB(uv);
-            vec4 advected = sampleVelB(uv - s.rg * dt * 0.01);
+            vec4 advected = sampleVelB(uv - s.rg * dt * 0.01 * aspect);
             advected.rg *= decayRate;
             advected.a  *= decayRate;
             gl_FragColor = advected;
